@@ -1,0 +1,14 @@
+[projet]
+name="pytorch-training"
+version ="0.1.0"
+description="Faster R-CNN training"
+readme="README.md"
+requires-python =">=3.10"
+
+dependencies =[
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "onnx>=1.15.0",
+    "pillow>=10.0.0",
+    "numpy>=1.24.0",
+    ]

@@ -1,0 +1,24 @@
+# fisiere de tip python
+.venv/
+__pycache__/
+.pytest_cache/
+.uv/
+
+#rust files
+
+/inference-app/target/
+**/*.rs.bk
+
+# ML files
+*.pt 
+*.pth 
+*.onnx
+data/
+models/
+
+
+# IDE filles
+
+.vscode/
+
+
