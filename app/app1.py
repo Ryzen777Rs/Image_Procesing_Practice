@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 import cv2
@@ -20,11 +21,23 @@ class MainApp(customtkinter.CTk):
         self.geometry("1280x720")
         self.resizable(True, True)
 
+        # Folderul dedicat pentru modele
+# Determinăm folderul în care se află fizic app1.py
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Astfel, calea va fi mereu "cale_proiect/app/models"
+        self.MODELS_DIR = os.path.join(current_dir, "models")
+        
+        if not os.path.exists(self.MODELS_DIR):
+            os.makedirs(self.MODELS_DIR)
+
         self.is_detecting = False
         self.pause_camera_preview = False
         self.is_running = True
         self.selected_mode = None
-        self.selected_model = "UNIVERSAL"
+        
+        # Setăm modelul implicit (va căuta primul fișier din folder sau un fallback)
+        self.selected_model = self.get_first_available_model()
         self.confidence_threshold = 0.50
         self.latest_screen_img = None
         self.latest_camera_img = None
@@ -34,8 +47,6 @@ class MainApp(customtkinter.CTk):
 
         self.PREVIEW_WIDTH = 530
         self.PREVIEW_HEIGHT = 298
-
-        self.AVAILABLE_MODELS = ["UNIVERSAL", "NANACHI", "TANKS"]
 
         # CONTAINERUL PRINCIPAL 
         self.main_frame = customtkinter.CTkFrame(master=self, corner_radius=15)
@@ -72,9 +83,11 @@ class MainApp(customtkinter.CTk):
         self.buttons_row_frame = customtkinter.CTkFrame(master=self.bottom_frame, fg_color="transparent")
         self.buttons_row_frame.pack(side="top", fill="x")
 
+        # Afișează numele modelului selectat (fără extensia .pt)
+        display_name = self.selected_model.replace(".pt", "").upper() if self.selected_model else "NICIUN MODEL"
         self.model_btn = customtkinter.CTkButton(
             master=self.buttons_row_frame,
-            text=self.selected_model,
+            text=display_name,
             font=("Roboto", 14, "bold"),
             height=45,
             width=190,
@@ -185,20 +198,40 @@ class MainApp(customtkinter.CTk):
         self.camera_thread.start()
         self.render_preview_ui()
 
+    def get_first_available_model(self):
+        """Returnează primul fișier .pt din folderul 'models', altfel un fallback implicit."""
+        if os.path.exists(self.MODELS_DIR):
+            files = [f for f in os.listdir(self.MODELS_DIR) if f.endswith(".pt")]
+            if files:
+                return files[0]
+        return "yolov8n.pt"
+
     def on_slider_change(self, value):
         self.confidence_threshold = value
         self.slider_label.configure(text=f"Prag ignorare (Confidence): {self.confidence_threshold:.2f}")
 
     def show_dropup_menu(self):
+        """Scanează folderul 'models/' în timp real și creează meniul de selecție."""
         dropup_menu = tk.Menu(self, tearoff=0, font=("Roboto", 11, "bold"))
-        for model in self.AVAILABLE_MODELS:
-            def select(m=model):
+        
+        # Scanează fișierele .pt din folder la fiecare deschidere a meniului
+        pt_files = []
+        if os.path.exists(self.MODELS_DIR):
+            pt_files = [f for f in os.listdir(self.MODELS_DIR) if f.endswith(".pt")]
+
+        # Dacă folderul este gol, adăugăm modelul implicit ca fallback
+        if not pt_files:
+            pt_files = ["yolov8n.pt"]
+
+        for model_file in pt_files:
+            def select(m=model_file):
                 self.selected_model = m
-                self.model_btn.configure(text=f"{m}")
-            dropup_menu.add_command(label=f"  {model}", command=select)
+                self.model_btn.configure(text=m.replace(".pt", "").upper())
+            dropup_menu.add_command(label=f"  {model_file}", command=select)
+
         x = self.model_btn.winfo_rootx()
         y = self.model_btn.winfo_rooty()
-        menu_height = len(self.AVAILABLE_MODELS) * 28 + 10
+        menu_height = len(pt_files) * 28 + 10
         dropup_menu.post(x, y - menu_height)
 
     def toggle_theme(self):
@@ -243,14 +276,11 @@ class MainApp(customtkinter.CTk):
                     break
 
     def _camera_capture_worker(self):
-        """Worker care eliberează complet camera dacă detecția este pornită."""
         while self.is_running:
-            # Dacă detecția este activă, nu deschidem camera deloc
             if self.pause_camera_preview:
                 time.sleep(0.2)
                 continue
 
-            # Deschidem camera doar când preview-ul este activ
             cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
             
             while self.is_running and not self.pause_camera_preview:
@@ -269,7 +299,6 @@ class MainApp(customtkinter.CTk):
                     )
                 time.sleep(0.033)
 
-            # ELIBERĂM FIZIC CAMERA ÎNAINTE DE A IEȘI DIN BUCLĂ
             cap.release()
             time.sleep(0.2)
 
@@ -280,23 +309,20 @@ class MainApp(customtkinter.CTk):
 
         self.is_detecting = True
 
-        # 1. Pauzăm preview-ul și oferim timp worker-ului să închidă camera
         if self.selected_mode == "camera":
             self.pause_camera_preview = True
-            time.sleep(0.5)  # Așteptăm ca cap.release() din worker să se execute
+            time.sleep(0.5)
 
-        # 2. Mapare nume model -> fișier real .pt
-        model_filename = "yolov8n.pt"  # Modelul tău existent din proiect
-        if self.selected_model == "UNIVERSAL":
-            model_filename = "yolov8n.pt"
-        elif self.selected_model == "NANACHI":
-            model_filename = "nanachi.pt"
-        elif self.selected_model == "TANKS":
-            model_filename = "tanks.pt"
+        # Construim calea completă către fișierul din folderul models/
+        model_path = os.path.join(self.MODELS_DIR, self.selected_model)
+        
+        # Fallback de siguranță dacă fișierul selectat a fost șters din folder între timp
+        if not os.path.exists(model_path):
+            print(f"[WARN] Modelul {self.selected_model} nu mai există în folder! Folosim modelul implicit.")
+            model_path = "yolov8n.pt" 
 
-        # Trimitem app_reference=self pentru ca detectorul să citească sliderul în timp real
         detector = ObjectDetector(
-            model_path=model_filename,
+            model_path=model_path,
             conf_threshold=self.confidence_threshold,
             app_reference=self,
         )
@@ -306,7 +332,6 @@ class MainApp(customtkinter.CTk):
             self.pause_camera_preview = False
             print("[INFO] Sesiunea de detecție s-a încheiat.")
 
-        # 3. Rulăm detecția pe un thread separat ca să nu blocheze GUI (Not Responding)
         def start_thread():
             if self.selected_mode == "camera":
                 detector.start_camera_detection(on_finish=on_detection_finish)

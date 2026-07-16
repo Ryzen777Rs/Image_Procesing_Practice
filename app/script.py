@@ -10,14 +10,9 @@ WDA_EXCLUDEFROMCAPTURE = 0x00000011
 
 class ObjectDetector:
 
-    def __init__(self, model_path="UNIVERSAL", conf_threshold=0.5, app_reference=None):
-        self.model_mapping = {
-            "UNIVERSAL": "yolov8n.pt",
-            "NANACHI": "yolov8s.pt",
-            "TANKS": "yolov8m.pt",
-        }
-        actual_file = self.model_mapping.get(model_path, model_path)
-        self.model = YOLO(actual_file)
+    def __init__(self, model_path="models/yolov8n.pt", conf_threshold=0.5, app_reference=None):
+        # Încarcă direct fișierul .pt aflat la calea specificată
+        self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
         self.app_reference = app_reference  # Referința către instanța MainApp
 
