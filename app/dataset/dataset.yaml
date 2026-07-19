@@ -1,0 +1,6 @@
+path: c:\Users\Ryzen\Image_Procesing_Practice\app\dataset
+train: images
+val: images
+
+names:
+  0: sigma
