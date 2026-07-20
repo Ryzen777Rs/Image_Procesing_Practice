@@ -6,7 +6,20 @@ import customtkinter
 import mss
 from PIL import Image
 import tkinter as tk
+
+
+
+
+
+
+
+
+
+
 from script import ObjectDetector
+
+# IMPORTĂM CLASA DIN PRIMUL FIȘIER
+from practicav1 import TrainWindow
 
 customtkinter.set_appearance_mode("dark")
 customtkinter.set_default_color_theme("dark-blue")
@@ -21,11 +34,8 @@ class MainApp(customtkinter.CTk):
         self.geometry("1280x720")
         self.resizable(True, True)
 
-        # Folderul dedicat pentru modele
-# Determinăm folderul în care se află fizic app1.py
+
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        # Astfel, calea va fi mereu "cale_proiect/app/models"
         self.MODELS_DIR = os.path.join(current_dir, "models")
         
         if not os.path.exists(self.MODELS_DIR):
@@ -36,7 +46,6 @@ class MainApp(customtkinter.CTk):
         self.is_running = True
         self.selected_mode = None
         
-        # Setăm modelul implicit (va căuta primul fișier din folder sau un fallback)
         self.selected_model = self.get_first_available_model()
         self.confidence_threshold = 0.50
         self.latest_screen_img = None
@@ -83,7 +92,6 @@ class MainApp(customtkinter.CTk):
         self.buttons_row_frame = customtkinter.CTkFrame(master=self.bottom_frame, fg_color="transparent")
         self.buttons_row_frame.pack(side="top", fill="x")
 
-        # Afișează numele modelului selectat (fără extensia .pt)
         display_name = self.selected_model.replace(".pt", "").upper() if self.selected_model else "NICIUN MODEL"
         self.model_btn = customtkinter.CTkButton(
             master=self.buttons_row_frame,
@@ -130,6 +138,21 @@ class MainApp(customtkinter.CTk):
             command=self.toggle_theme,
         )
         self.theme_btn.pack(side="right", padx=10)
+
+        # BUTONUL ANTRENEAZĂ ACUM DESCHIDE FEREASTRA TA NEW GENERATED
+        self.create_btn = customtkinter.CTkButton(
+            master=self.top_bar_frame,
+            text="Antreneaza",
+            font=("Roboto", 16, "bold"),
+            width=120,
+            height=45,
+            corner_radius=22,
+            fg_color="#2b2b36",
+            text_color="#ffd700",
+            hover_color="#3f3f4e",
+            command=self.open_create, # Execută funcția modificată mai jos
+        )
+        self.create_btn.pack(side="right", padx=10)
 
         # Carduri de selecție
         self.cards_frame = customtkinter.CTkFrame(master=self.main_frame, fg_color="transparent")
@@ -199,7 +222,6 @@ class MainApp(customtkinter.CTk):
         self.render_preview_ui()
 
     def get_first_available_model(self):
-        """Returnează primul fișier .pt din folderul 'models', altfel un fallback implicit."""
         if os.path.exists(self.MODELS_DIR):
             files = [f for f in os.listdir(self.MODELS_DIR) if f.endswith(".pt")]
             if files:
@@ -211,15 +233,12 @@ class MainApp(customtkinter.CTk):
         self.slider_label.configure(text=f"Prag ignorare (Confidence): {self.confidence_threshold:.2f}")
 
     def show_dropup_menu(self):
-        """Scanează folderul 'models/' în timp real și creează meniul de selecție."""
         dropup_menu = tk.Menu(self, tearoff=0, font=("Roboto", 11, "bold"))
         
-        # Scanează fișierele .pt din folder la fiecare deschidere a meniului
         pt_files = []
         if os.path.exists(self.MODELS_DIR):
             pt_files = [f for f in os.listdir(self.MODELS_DIR) if f.endswith(".pt")]
 
-        # Dacă folderul este gol, adăugăm modelul implicit ca fallback
         if not pt_files:
             pt_files = ["yolov8n.pt"]
 
@@ -233,6 +252,21 @@ class MainApp(customtkinter.CTk):
         y = self.model_btn.winfo_rooty()
         menu_height = len(pt_files) * 28 + 10
         dropup_menu.post(x, y - menu_height)
+
+    def open_create(self):
+        """Ascunde fereastra principală și deschide meniul de antrenare."""
+        self.withdraw()  # Ascunde fereastra principală (dispare și din taskbar)
+        
+        # Deschidem fereastra de antrenare
+        train_win = TrainWindow(self)
+        
+        # Când utilizatorul închide fereastra de antrenare, reapărem fereastra principală
+        train_win.protocol("WM_DELETE_WINDOW", lambda: self.reafiseaza_fereastra_principala(train_win))
+
+    def reafiseaza_fereastra_principala(self, fereastra_secundara):
+        """Distruge fereastra secundară și aduce înapoi fereastra principală."""
+        fereastra_secundara.destroy()
+        self.deiconify()  # Readuce fereastra principală pe ecran
 
     def toggle_theme(self):
         current_mode = customtkinter.get_appearance_mode()
@@ -313,12 +347,10 @@ class MainApp(customtkinter.CTk):
             self.pause_camera_preview = True
             time.sleep(0.5)
 
-        # Construim calea completă către fișierul din folderul models/
         model_path = os.path.join(self.MODELS_DIR, self.selected_model)
         
-        # Fallback de siguranță dacă fișierul selectat a fost șters din folder între timp
         if not os.path.exists(model_path):
-            print(f"[WARN] Modelul {self.selected_model} nu mai există în folder! Folosim modelul implicit.")
+            print(f"[WARN] Modelul {self.selected_model} nu mai există! Folosim modelul implicit.")
             model_path = "yolov8n.pt" 
 
         detector = ObjectDetector(
