@@ -6,16 +6,6 @@ import customtkinter
 import mss
 from PIL import Image
 import tkinter as tk
-
-
-
-
-
-
-
-
-
-
 from script import ObjectDetector
 
 # IMPORTĂM CLASA DIN PRIMUL FIȘIER
