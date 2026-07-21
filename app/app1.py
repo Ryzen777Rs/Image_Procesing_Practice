@@ -8,7 +8,7 @@ from PIL import Image
 import tkinter as tk
 from script import ObjectDetector
 
-# IMPORTĂM CLASA DIN PRIMUL FIȘIER
+# IMPORTĂM CLASA DIN FIȘIERUL DE ANTRENARE
 from practicav1 import TrainWindow
 
 customtkinter.set_appearance_mode("dark")
@@ -24,7 +24,6 @@ class MainApp(customtkinter.CTk):
         self.geometry("1280x720")
         self.resizable(True, True)
 
-
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.MODELS_DIR = os.path.join(current_dir, "models")
         
@@ -34,6 +33,7 @@ class MainApp(customtkinter.CTk):
         self.is_detecting = False
         self.pause_camera_preview = False
         self.is_running = True
+        self.is_window_active = True
         self.selected_mode = None
         
         self.selected_model = self.get_first_available_model()
@@ -129,7 +129,7 @@ class MainApp(customtkinter.CTk):
         )
         self.theme_btn.pack(side="right", padx=10)
 
-        # BUTONUL ANTRENEAZĂ ACUM DESCHIDE FEREASTRA TA NEW GENERATED
+        # BUTONUL ANTRENEAZĂ
         self.create_btn = customtkinter.CTkButton(
             master=self.top_bar_frame,
             text="Antreneaza",
@@ -140,7 +140,7 @@ class MainApp(customtkinter.CTk):
             fg_color="#2b2b36",
             text_color="#ffd700",
             hover_color="#3f3f4e",
-            command=self.open_create, # Execută funcția modificată mai jos
+            command=self.open_create,
         )
         self.create_btn.pack(side="right", padx=10)
 
@@ -244,19 +244,16 @@ class MainApp(customtkinter.CTk):
         dropup_menu.post(x, y - menu_height)
 
     def open_create(self):
-        """Ascunde fereastra principală și deschide meniul de antrenare."""
-        self.withdraw()  # Ascunde fereastra principală (dispare și din taskbar)
+        self.is_window_active = False
+        self.withdraw()
         
-        # Deschidem fereastra de antrenare
         train_win = TrainWindow(self)
-        
-        # Când utilizatorul închide fereastra de antrenare, reapărem fereastra principală
         train_win.protocol("WM_DELETE_WINDOW", lambda: self.reafiseaza_fereastra_principala(train_win))
 
     def reafiseaza_fereastra_principala(self, fereastra_secundara):
-        """Distruge fereastra secundară și aduce înapoi fereastra principală."""
         fereastra_secundara.destroy()
-        self.deiconify()  # Readuce fereastra principală pe ecran
+        self.deiconify()
+        self.is_window_active = True
 
     def toggle_theme(self):
         current_mode = customtkinter.get_appearance_mode()
@@ -288,6 +285,9 @@ class MainApp(customtkinter.CTk):
         with mss.mss() as sct:
             monitor = sct.monitors[1]
             while self.is_running:
+                if not self.is_window_active:
+                    time.sleep(0.2)
+                    continue
                 try:
                     sct_img = sct.grab(monitor)
                     img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
@@ -301,15 +301,20 @@ class MainApp(customtkinter.CTk):
 
     def _camera_capture_worker(self):
         while self.is_running:
-            if self.pause_camera_preview:
+            if self.pause_camera_preview or not self.is_window_active:
                 time.sleep(0.2)
                 continue
 
             cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
             
-            while self.is_running and not self.pause_camera_preview:
+            if not cap.isOpened():
+                cap.release()
+                time.sleep(1.0)
+                continue
+
+            while self.is_running and not self.pause_camera_preview and self.is_window_active:
                 ret, frame = cap.read()
-                if ret:
+                if ret and frame is not None:
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     img = Image.fromarray(frame_rgb)
                     resized_img = img.resize(
@@ -321,10 +326,15 @@ class MainApp(customtkinter.CTk):
                         dark_image=resized_img,
                         size=(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT),
                     )
+                else:
+                    time.sleep(0.05)
                 time.sleep(0.033)
 
-            cap.release()
-            time.sleep(0.2)
+            try:
+                cap.release()
+            except Exception:
+                pass
+            time.sleep(0.5)
 
     def execute_detection(self):
         if self.is_detecting:
@@ -335,7 +345,7 @@ class MainApp(customtkinter.CTk):
 
         if self.selected_mode == "camera":
             self.pause_camera_preview = True
-            time.sleep(0.5)
+            time.sleep(0.8)
 
         model_path = os.path.join(self.MODELS_DIR, self.selected_model)
         
@@ -351,6 +361,7 @@ class MainApp(customtkinter.CTk):
 
         def on_detection_finish():
             self.is_detecting = False
+            time.sleep(0.5)
             self.pause_camera_preview = False
             print("[INFO] Sesiunea de detecție s-a încheiat.")
 
@@ -366,10 +377,12 @@ class MainApp(customtkinter.CTk):
         if self.latest_screen_img is not None:
             self.screen_preview_label.configure(image=self.latest_screen_img, text="")
 
-        if self.latest_camera_img is not None and not self.pause_camera_preview:
+        if self.latest_camera_img is not None and not self.pause_camera_preview and self.is_window_active:
             self.cam_preview_label.configure(image=self.latest_camera_img, text="")
         elif self.pause_camera_preview:
             self.cam_preview_label.configure(image="", text="Detecție activă...")
+        elif not self.is_window_active:
+            self.cam_preview_label.configure(image="", text="Antrenare activă...")
 
         if self.is_running:
             self.after(30, self.render_preview_ui)

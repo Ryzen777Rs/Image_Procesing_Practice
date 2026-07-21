@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 import threading
 import time
+from tkinter import filedialog
 
 import customtkinter
 from PIL import Image, ImageDraw
@@ -33,7 +34,6 @@ def colecteaza_date_antrenare(
     base_dir=".", clase_selectate=None, extensii_imagini={".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 ):
     """Parcurge recursiv toate subfolderele din 'images' și 'labels' pentru a găsi
-
     perechi valide (imagine, etichetă).
     """
     base_path = Path(base_dir)
@@ -137,12 +137,10 @@ class TrainWorker(threading.Thread):
         print("PREGĂTIRE SET DE DATE PENTRU ANTRENARE YOLO...")
         print("=" * 40)
 
-        # 1. Creare mapă temporară pentru YOLO Dataset
         dataset_dir = os.path.join(self.director_curent, "yolo_dataset_temp")
         os.makedirs(os.path.join(dataset_dir, "images", "train"), exist_ok=True)
         os.makedirs(os.path.join(dataset_dir, "labels", "train"), exist_ok=True)
 
-        # Mapăm clasele la indexuri (0, 1, 2...)
         class_mapping = {nume: i for i, nume in enumerate(self.clase_selectate)}
 
         mapa_imagini = os.path.join(self.director_curent, "images")
@@ -150,7 +148,6 @@ class TrainWorker(threading.Thread):
 
         imagini_adaugate = 0
         try:
-            # 2. Căutare RECURSIVĂ a imaginilor și etichetelor în subfoldere
             extensii_valide = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 
             for nume_clasa in self.clase_selectate:
@@ -233,7 +230,6 @@ class TrainWorker(threading.Thread):
                 f"✅ Au fost pregătite {imagini_adaugate} imagini pentru antrenare."
             )
 
-            # 3. Creare fișier data.yaml pentru YOLO
             yaml_path = os.path.join(dataset_dir, "data.yaml")
             yaml_content = {
                 "path": dataset_dir,
@@ -244,7 +240,6 @@ class TrainWorker(threading.Thread):
             with open(yaml_path, "w", encoding="utf-8") as f:
                 yaml.dump(yaml_content, f)
 
-            # 4. Configurare Model
             if self.model_ales == "Model YOLO neantrenat":
                 model = YOLO("yolov8n.pt")
             else:
@@ -295,7 +290,6 @@ class TrainWorker(threading.Thread):
                 exist_ok=True,
             )
 
-            # 5. Salvarea modelului antrenat în mapa 'models'
             if not self._cancel_event.is_set():
                 best_model_path = os.path.join(
                     self.director_curent,
@@ -305,7 +299,6 @@ class TrainWorker(threading.Thread):
                     "best.pt",
                 )
                 if os.path.exists(best_model_path):
-                    # Dacă e model neantrenat și utilizatorul a scris un nume, îl folosim
                     if self.model_ales == "Model YOLO neantrenat":
                         nume_curat = self.nume_model_salvat_user.strip()
                         if nume_curat:
@@ -315,7 +308,6 @@ class TrainWorker(threading.Thread):
                         else:
                             nume_model_salvat = f"model_sigma_{int(time.time())}.pt"
                     else:
-                        # Dacă s-a reantrenat un model existent, suprascriem modelul sau generăm o versiune nouă
                         nume_model_salvat = self.model_ales
 
                     destinatie_finala = os.path.join(
@@ -352,9 +344,6 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.geometry("1280x720")
         self.title("Meniu Antrenare și Galerie")
 
-        self.transient(parent)
-        self.grab_set()
-
         self.DIRECTOR_CURENT = os.path.dirname(os.path.abspath(__file__))
         self.MAPA_IMAGINI = os.path.join(self.DIRECTOR_CURENT, "images")
         self.MAPA_ALL = os.path.join(self.MAPA_IMAGINI, "all")
@@ -368,6 +357,13 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.imagini_salvate = []
         self.clase_existente = []
         self.thumbnail_cache = {}
+        self.load_token = 0
+
+        # ---- NOI VARIABILE PENTRU PAGINARE ----
+        self.imagini_per_pagina = 100
+        self.pagina_curenta = 0
+        self.lista_date_imagini = []
+        # ---------------------------------------
 
         self.vars_clase = {}
         self.var_all_clase = customtkinter.BooleanVar(value=True)
@@ -417,7 +413,6 @@ class TrainWindow(customtkinter.CTkToplevel):
             widget._canvas.bind("<Button-5>", functie_scroll, add="+")
 
     def creeaza_pagini(self):
-        # 1. PAGINA PRINCIPALĂ
         self.main_page = customtkinter.CTkFrame(self, fg_color="transparent")
 
         title = customtkinter.CTkLabel(
@@ -468,7 +463,6 @@ class TrainWindow(customtkinter.CTkToplevel):
         )
         button3.pack(pady=10, padx=10)
 
-        # 2. GALERIA
         self.second_page = customtkinter.CTkFrame(self, fg_color="transparent")
 
         top_bar = customtkinter.CTkFrame(
@@ -525,16 +519,40 @@ class TrainWindow(customtkinter.CTkToplevel):
             self.second_page, fg_color="transparent"
         )
         bottom_bar.pack(fill="x", side="bottom", padx=20, pady=20)
+        
+        bottom_bar.columnconfigure(0, weight=1)
+        bottom_bar.columnconfigure(1, weight=1)
+        bottom_bar.columnconfigure(2, weight=1)
 
-        buton_refresh_galerie = customtkinter.CTkButton(
-            bottom_bar, text="Actualizează Galeria", command=self.incarca_imagini
+        buton_import_imagini = customtkinter.CTkButton(
+            bottom_bar, text="Import Images", command=self.deschide_dialog_import
         )
-        buton_refresh_galerie.pack(side="left")
+        buton_import_imagini.grid(row=0, column=0, sticky="w")
+
+        # --- PANOU PAGINARE ---
+        frame_paginare = customtkinter.CTkFrame(bottom_bar, fg_color="transparent")
+        frame_paginare.grid(row=0, column=1)
+
+        self.btn_prev = customtkinter.CTkButton(
+            frame_paginare, text="< Înapoi", width=70, command=self.pagina_anterioara
+        )
+        self.btn_prev.pack(side="left", padx=5)
+
+        self.lbl_paginare = customtkinter.CTkLabel(
+            frame_paginare, text="Pagină: 1 / 1", font=("Roboto", 14, "bold")
+        )
+        self.lbl_paginare.pack(side="left", padx=15)
+
+        self.btn_next = customtkinter.CTkButton(
+            frame_paginare, text="Înainte >", width=70, command=self.pagina_urmatoare
+        )
+        self.btn_next.pack(side="left", padx=5)
+        # ------------------------
 
         buton_inapoi_galerie = customtkinter.CTkButton(
-            bottom_bar, text="Înapoi", command=self.arata_pagina_principala
+            bottom_bar, text="Meniu Principal", command=self.arata_pagina_principala
         )
-        buton_inapoi_galerie.pack(side="right")
+        buton_inapoi_galerie.grid(row=0, column=2, sticky="e")
 
         self.galerie_imagini = customtkinter.CTkScrollableFrame(
             self.second_page
@@ -549,7 +567,6 @@ class TrainWindow(customtkinter.CTkToplevel):
                 self.galerie_imagini._parent_canvas, self._pe_rotire_galerie
             )
 
-        # 3. ÎNVĂȚARE
         self.third_page = customtkinter.CTkFrame(self, fg_color="transparent")
 
         main_invatare_container = customtkinter.CTkFrame(
@@ -728,7 +745,6 @@ class TrainWindow(customtkinter.CTkToplevel):
         )
         lbl_nume_model_salvat.pack(anchor="w", padx=15, pady=(5, 2))
 
-        # SALVĂM ELEMENTUL CTkEntry CA PROPRIETATE A CLASEI
         self.entry_nume_model = customtkinter.CTkEntry(
             frame_bottom_modele,
             textvariable=self.var_nume_model_nou,
@@ -748,8 +764,97 @@ class TrainWindow(customtkinter.CTkToplevel):
         )
         buton_inapoi_invatare.pack(side="right")
 
+    def pagina_anterioara(self):
+        if self.pagina_curenta > 0:
+            self.pagina_curenta -= 1
+            self.afiseaza_pagina_curenta(self.load_token)
+
+    def pagina_urmatoare(self):
+        total_pagini = (len(self.lista_date_imagini) + self.imagini_per_pagina - 1) // self.imagini_per_pagina
+        if self.pagina_curenta < total_pagini - 1:
+            self.pagina_curenta += 1
+            self.afiseaza_pagina_curenta(self.load_token)
+
+    def deschide_dialog_import(self):
+        dialog = customtkinter.CTkToplevel(self)
+        dialog.geometry("420x220")
+        dialog.title("Import Images")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        customtkinter.CTkLabel(
+            dialog, text="Alegeți modul de import:", font=("Roboto", 16, "bold")
+        ).pack(pady=(25, 15))
+
+        btn_fisier = customtkinter.CTkButton(
+            dialog,
+            text="Selectează Fișier(e)",
+            width=280,
+            height=36,
+            command=lambda: [dialog.destroy(), self.importa_fisiere_dialog()],
+        )
+        btn_fisier.pack(pady=6)
+
+        btn_folder = customtkinter.CTkButton(
+            dialog,
+            text="Selectează Folder (cu subfoldere)",
+            width=280,
+            height=36,
+            command=lambda: [dialog.destroy(), self.importa_folder_dialog()],
+        )
+        btn_folder.pack(pady=6)
+
+    def importa_fisiere_dialog(self):
+        fisiere = filedialog.askopenfilenames(
+            title="Selectează imagini",
+            filetypes=[
+                ("Imagini", "*.png *.jpg *.jpeg *.bmp *.webp"),
+                ("Toate fișierele", "*.*"),
+            ],
+        )
+        if fisiere:
+            def proceseaza_import():
+                extensii_valide = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+                importate = 0
+                for f in fisiere:
+                    c_path = Path(f)
+                    if c_path.suffix.lower() in extensii_valide:
+                        dest = Path(self.MAPA_ALL) / c_path.name
+                        if dest.exists():
+                            b = c_path.stem
+                            ext = c_path.suffix
+                            dest = Path(self.MAPA_ALL) / f"{b}_{int(time.time())}{ext}"
+                        shutil.copy(c_path, dest)
+                        importate += 1
+                print(f"📥 Au fost importate {importate} fișiere.")
+                self.after(0, self.incarca_imagini)
+            
+            threading.Thread(target=proceseaza_import, daemon=True).start()
+
+    def importa_folder_dialog(self):
+        folder = filedialog.askdirectory(title="Selectează folderul cu imagini")
+        if folder:
+            def proceseaza_import_folder():
+                folder_path = Path(folder)
+                extensii_valide = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+                importate = 0
+                
+                for item in folder_path.rglob("*"):
+                    if item.is_file() and item.suffix.lower() in extensii_valide:
+                        dest = Path(self.MAPA_ALL) / item.name
+                        if dest.exists():
+                            b = item.stem
+                            ext = item.suffix
+                            dest = Path(self.MAPA_ALL) / f"{b}_{int(time.time())}{ext}"
+                        shutil.copy(item, dest)
+                        importate += 1
+                        
+                print(f"📥 Au fost importate {importate} imagini din folder și subfoldere.")
+                self.after(0, self.incarca_imagini)
+            
+            threading.Thread(target=proceseaza_import_folder, daemon=True).start()
+
     def _actualizeaza_stare_nume_model(self):
-        """Activează câmpul de denumire doar pentru 'Model YOLO neantrenat'."""
         if self.var_model_selectat.get() == "Model YOLO neantrenat":
             self.entry_nume_model.configure(state="normal")
         else:
@@ -827,7 +932,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                 value=nume_model,
                 variable=self.var_model_selectat,
                 font=("Roboto", 14),
-                command=self._actualizeaza_stare_nume_model,  # EVENT DEDICAT SCHIMBĂRII
+                command=self._actualizeaza_stare_nume_model,
             )
             radio_model.pack(anchor="w", padx=10, pady=8)
 
@@ -1045,9 +1150,13 @@ class TrainWindow(customtkinter.CTkToplevel):
             text=f"Clasa '{nume}' există deja!\nAlegeți altă denumire.",
             font=("Roboto", 14),
         ).pack(pady=(25, 15))
-        customtkinter.CTkButton(
+        
+        btn = customtkinter.CTkButton(
             aviz, text="Am înțeles", width=120, command=aviz.destroy
-        ).pack(pady=10)
+        )
+        btn.pack(pady=10)
+        
+        aviz.bind("<Return>", lambda event: aviz.destroy())
 
     def deschide_dialog_clasa(self):
         dialog = customtkinter.CTkToplevel(self)
@@ -1059,15 +1168,17 @@ class TrainWindow(customtkinter.CTkToplevel):
         customtkinter.CTkLabel(
             dialog, text="Scrieți denumirea clasei:", font=("Roboto", 16)
         ).pack(pady=(25, 10), padx=20, anchor="w")
+        
         entry_clasa = customtkinter.CTkEntry(
             dialog, width=410, font=("Roboto", 14)
         )
         entry_clasa.pack(pady=10, padx=20)
+        entry_clasa.focus_set() 
 
         frame_butoane = customtkinter.CTkFrame(dialog, fg_color="transparent")
         frame_butoane.pack(pady=(15, 0), padx=20, fill="x")
 
-        def pe_ok():
+        def pe_ok(event=None):
             nume = entry_clasa.get().strip()
             if nume:
                 if nume.lower() == "all" or nume.lower() in [
@@ -1081,6 +1192,9 @@ class TrainWindow(customtkinter.CTkToplevel):
             else:
                 dialog.destroy()
 
+        dialog.bind("<Return>", pe_ok)
+        entry_clasa.bind("<Return>", pe_ok)
+
         customtkinter.CTkButton(
             frame_butoane,
             text="Cancel",
@@ -1089,6 +1203,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             border_width=1,
             command=dialog.destroy,
         ).pack(side="right", padx=(10, 0))
+        
         customtkinter.CTkButton(
             frame_butoane, text="Ok", width=100, command=pe_ok
         ).pack(side="right")
@@ -1136,86 +1251,104 @@ class TrainWindow(customtkinter.CTkToplevel):
         tab_frame = customtkinter.CTkFrame(
             master=self.tab_scroll_frame,
             fg_color="#2b2b2b",
-            corner_radius=8,
+            corner_radius=6,
+            cursor="hand2"
         )
         tab_frame.nume_clasa = nume
         tab_frame.pack(side="left", padx=4)
 
-        btn_nume = customtkinter.CTkButton(
+        def pe_click_tab(event=None):
+            self.filtreaza_dupa_clasa(nume)
+
+        def pe_click_x(event=None):
+            self.sterge_clasa(nume)
+
+        lbl_nume = customtkinter.CTkLabel(
             master=tab_frame,
             text=nume,
-            height=32,
+            width=58, 
+            height=32, 
             fg_color="transparent",
-            hover_color="#3b3b3b",
-            command=lambda: self.filtreaza_dupa_clasa(nume),
+            text_color="#DCE4EE",
+            font=("Roboto", 13),
+            cursor="hand2"
         )
-        btn_nume.pack(side="left", padx=(4, 0))
+        lbl_nume.pack(side="left", fill="both", expand=True, padx=(10, 2))
 
-        btn_sterge = customtkinter.CTkButton(
+        lbl_x = customtkinter.CTkLabel(
             master=tab_frame,
             text="✕",
-            width=26,
+            width=22,
             height=32,
             fg_color="transparent",
-            hover_color="#8b0000",
             text_color="#aaaaaa",
-            font=("Roboto", 12, "bold"),
-            command=lambda: self.confirma_stergere_clasa(nume),
+            font=("Roboto", 14, "bold"),
+            cursor="hand2"
         )
-        btn_sterge.pack(side="right", padx=(0, 2))
+        lbl_x.pack(side="right", fill="y", padx=(0, 8))
+
+        for element in (tab_frame, lbl_nume, lbl_x):
+            if hasattr(element, "_canvas"):
+                element._canvas.configure(cursor="hand2")
+
+        def pe_enter_tab(event=None):
+            if getattr(self, "clasa_selectata", None) != nume:
+                tab_frame.configure(fg_color="#3b3b3b")
+
+        def pe_leave_tab(event=None):
+            if getattr(self, "clasa_selectata", None) != nume:
+                tab_frame.configure(fg_color="#2b2b2b")
+
+        def pe_enter_x(event=None):
+            pe_enter_tab()
+            lbl_x.configure(text_color="#e0e0e0")
+
+        def pe_leave_x(event=None):
+            pe_leave_tab()
+            lbl_x.configure(text_color="#aaaaaa")
+
+        for element in (tab_frame, lbl_nume):
+            element.bind("<Enter>", pe_enter_tab)
+            element.bind("<Leave>", pe_leave_tab)
+            element.bind("<Button-1>", pe_click_tab)
+            if hasattr(element, "_canvas"):
+                element._canvas.bind("<Enter>", pe_enter_tab)
+                element._canvas.bind("<Leave>", pe_leave_tab)
+                element._canvas.bind("<Button-1>", pe_click_tab)
+
+        lbl_x.bind("<Enter>", pe_enter_x)
+        lbl_x.bind("<Leave>", pe_leave_x)
+        lbl_x.bind("<Button-1>", pe_click_x)
+        if hasattr(lbl_x, "_canvas"):
+            lbl_x._canvas.bind("<Enter>", pe_enter_x)
+            lbl_x._canvas.bind("<Leave>", pe_leave_x)
+            lbl_x._canvas.bind("<Button-1>", pe_click_x)
 
         self._bind_scroll_la_widget(tab_frame, self._pe_rotire_tabs)
-        self._bind_scroll_la_widget(btn_nume, self._pe_rotire_tabs)
-        self._bind_scroll_la_widget(btn_sterge, self._pe_rotire_tabs)
+        self._bind_scroll_la_widget(lbl_nume, self._pe_rotire_tabs)
+        self._bind_scroll_la_widget(lbl_x, self._pe_rotire_tabs)
 
         if nume not in self.snipper.classes:
             self.snipper.classes.append(nume)
             self.snipper.save_classes()
 
-    def confirma_stergere_clasa(self, nume_clasa):
-        dialog = customtkinter.CTkToplevel(self)
-        dialog.geometry("420x170")
-        dialog.title("Confirmare ștergere")
-        dialog.transient(self)
-        dialog.grab_set()
-
-        lbl = customtkinter.CTkLabel(
-            dialog,
-            text=f"Ești sigur că vrei să ștergi clasa '{nume_clasa}'?\nToate pozele și adnotările ei vor fi șterse definitiv!",
-            font=("Roboto", 14),
-            wraplength=380,
-        )
-        lbl.pack(pady=(20, 15), padx=15)
-
-        frame_butoane = customtkinter.CTkFrame(dialog, fg_color="transparent")
-        frame_butoane.pack(pady=10)
-
-        def pe_da():
-            dialog.destroy()
-            self.sterge_clasa(nume_clasa)
-
-        customtkinter.CTkButton(
-            frame_butoane,
-            text="Șterge",
-            fg_color="#8b0000",
-            hover_color="#a83232",
-            width=100,
-            command=pe_da,
-        ).pack(side="left", padx=10)
-        customtkinter.CTkButton(
-            frame_butoane,
-            text="Anulează",
-            fg_color="transparent",
-            border_width=1,
-            width=100,
-            command=dialog.destroy,
-        ).pack(side="left", padx=10)
-
     def sterge_clasa(self, nume_clasa):
         cale_imagini = os.path.join(self.MAPA_IMAGINI, nume_clasa)
         cale_labels = os.path.join(self.MAPA_LABELS, nume_clasa)
+        
+        ext = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
         if os.path.exists(cale_imagini):
+            for root, _, files in os.walk(cale_imagini):
+                for file in files:
+                    if file.lower().endswith(ext):
+                        src_img = os.path.join(root, file)
+                        dst_img = os.path.join(self.MAPA_ALL, file)
+                        if os.path.exists(dst_img):
+                            b, ext_f = os.path.splitext(file)
+                            dst_img = os.path.join(self.MAPA_ALL, f"{b}_{int(time.time())}{ext_f}")
+                        shutil.move(src_img, dst_img)
             shutil.rmtree(cale_imagini, ignore_errors=True)
+            
         if os.path.exists(cale_labels):
             shutil.rmtree(cale_labels, ignore_errors=True)
 
@@ -1309,11 +1442,55 @@ class TrainWindow(customtkinter.CTkToplevel):
                     if os.path.exists(cale_txt):
                         os.remove(cale_txt)
                         break
-            if calea_imagine in self.thumbnail_cache:
-                del self.thumbnail_cache[calea_imagine]
+            
+            keys_to_del = [k for k in self.thumbnail_cache.keys() if calea_imagine in k]
+            for k in keys_to_del:
+                del self.thumbnail_cache[k]
+                
             self.incarca_imagini()
         except Exception as e:
             print(f"Eroare stergere img: {e}")
+
+    def scoate_din_clasa(self, calea_imagine, nume_fara_extensie, nume_clasa_efectiva):
+        try:
+            if nume_clasa_efectiva and nume_clasa_efectiva.lower() != "all":
+                cale_txt = os.path.join(
+                    self.DIRECTOR_CURENT,
+                    "labels",
+                    nume_clasa_efectiva,
+                    nume_fara_extensie + ".txt",
+                )
+                if os.path.exists(cale_txt):
+                    os.remove(cale_txt)
+            else:
+                for c_ex in self.clase_existente:
+                    cale_txt = os.path.join(
+                        self.DIRECTOR_CURENT,
+                        "labels",
+                        c_ex,
+                        nume_fara_extensie + ".txt",
+                    )
+                    if os.path.exists(cale_txt):
+                        os.remove(cale_txt)
+                        break
+
+            dir_parinte = os.path.dirname(calea_imagine)
+            nume_folder_parinte = os.path.basename(dir_parinte)
+            if nume_folder_parinte.lower() != "all":
+                destinatie_all = os.path.join(self.MAPA_ALL, os.path.basename(calea_imagine))
+                if os.path.exists(calea_imagine):
+                    if os.path.exists(destinatie_all):
+                        b, ext_f = os.path.splitext(os.path.basename(calea_imagine))
+                        destinatie_all = os.path.join(self.MAPA_ALL, f"{b}_{int(time.time())}{ext_f}")
+                    shutil.move(calea_imagine, destinatie_all)
+
+            keys_to_del = [k for k in self.thumbnail_cache.keys() if calea_imagine in k]
+            for k in keys_to_del:
+                del self.thumbnail_cache[k]
+
+            self.incarca_imagini()
+        except Exception as e:
+            print(f"Eroare la scoaterea imaginii din clasă: {e}")
 
     def curata_imagini_neadnotate(self):
         ext = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
@@ -1346,210 +1523,240 @@ class TrainWindow(customtkinter.CTkToplevel):
                                         os.path.join(self.MAPA_ALL, fisier),
                                     )
 
+    # ==========================================
+    # LOGICĂ NOUĂ ȘI RAPIDĂ PENTRU ÎNCĂRCARE
+    # ==========================================
     def incarca_imagini(self):
-        self.curata_imagini_neadnotate()
         if not os.path.exists(self.MAPA_IMAGINI):
             return
 
+        self.load_token += 1
+        current_token = self.load_token
+
         for widget in self.galerie_imagini.winfo_children():
             widget.destroy()
-        self.imagini_salvate.clear()
-
-        ext = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
-        lista = []
-        foldere = (
-            [self.MAPA_ALL]
-            if self.clasa_selectata is None
-            else [os.path.join(self.MAPA_IMAGINI, self.clasa_selectata)]
+            
+        lbl_incarcare = customtkinter.CTkLabel(
+            self.galerie_imagini, text="Se scanează rapid imaginile de pe disc...", font=("Roboto", 16)
         )
+        lbl_incarcare.pack(pady=40)
 
-        if self.clasa_selectata is None:
-            for n_f in os.listdir(self.MAPA_IMAGINI):
-                c_f = os.path.join(self.MAPA_IMAGINI, n_f)
-                if os.path.isdir(c_f) and n_f.lower() != "all":
-                    foldere.append(c_f)
+        self.btn_prev.configure(state="disabled")
+        self.btn_next.configure(state="disabled")
 
-        for c_f in foldere:
-            if not os.path.exists(c_f):
-                continue
-            n_c = os.path.basename(c_f)
-            is_all = n_c.lower() == "all"
+        def proc_scanare():
+            if current_token != self.load_token:
+                return
+            
+            self.curata_imagini_neadnotate()
 
-            for root, _, files in os.walk(c_f):
-                for f_name in files:
-                    if f_name.lower().endswith(ext):
-                        cale_c = os.path.join(root, f_name)
-                        n_fara, _ = os.path.splitext(f_name)
-                        n_clasa_ef = "all"
-                        este_ad = False
+            ext = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+            lista = []
+            foldere = (
+                [self.MAPA_ALL]
+                if self.clasa_selectata is None
+                else [os.path.join(self.MAPA_IMAGINI, self.clasa_selectata)]
+            )
 
-                        if not is_all:
-                            n_clasa_ef = n_c
-                            este_ad = os.path.exists(
-                                os.path.join(
-                                    self.DIRECTOR_CURENT,
-                                    "labels",
-                                    n_c,
-                                    n_fara + ".txt",
+            if self.clasa_selectata is None:
+                for n_f in os.listdir(self.MAPA_IMAGINI):
+                    c_f = os.path.join(self.MAPA_IMAGINI, n_f)
+                    if os.path.isdir(c_f) and n_f.lower() != "all":
+                        foldere.append(c_f)
+
+            for c_f in foldere:
+                if not os.path.exists(c_f):
+                    continue
+                n_c = os.path.basename(c_f)
+                is_all = n_c.lower() == "all"
+
+                for root, _, files in os.walk(c_f):
+                    for f_name in files:
+                        if f_name.lower().endswith(ext):
+                            cale_c = os.path.join(root, f_name)
+                            n_fara, _ = os.path.splitext(f_name)
+                            n_clasa_ef = "all"
+                            este_ad = False
+
+                            if not is_all:
+                                n_clasa_ef = n_c
+                                este_ad = os.path.exists(
+                                    os.path.join(self.DIRECTOR_CURENT, "labels", n_c, n_fara + ".txt")
                                 )
-                            )
-                        else:
-                            for c_ex in self.clase_existente:
-                                if os.path.exists(
-                                    os.path.join(
-                                        self.DIRECTOR_CURENT,
-                                        "labels",
-                                        c_ex,
-                                        n_fara + ".txt",
-                                    )
-                                ):
-                                    este_ad = True
-                                    n_clasa_ef = c_ex
-                                    break
-                        lista.append(
-                            (cale_c, f_name, n_fara, n_clasa_ef, este_ad)
-                        )
+                            else:
+                                for c_ex in self.clase_existente:
+                                    if os.path.exists(
+                                        os.path.join(self.DIRECTOR_CURENT, "labels", c_ex, n_fara + ".txt")
+                                    ):
+                                        este_ad = True
+                                        n_clasa_ef = c_ex
+                                        break
+                            lista.append((cale_c, f_name, n_fara, n_clasa_ef, este_ad))
 
-        def proc_async():
+            if current_token == self.load_token:
+                self.after(0, self._finalizeaza_scanarea, lista, current_token)
+
+        threading.Thread(target=proc_scanare, daemon=True).start()
+
+    def _finalizeaza_scanarea(self, lista_imagini, token):
+        if token != self.load_token:
+            return
+        
+        self.lista_date_imagini = lista_imagini
+        self.pagina_curenta = 0
+        self.afiseaza_pagina_curenta(token)
+
+    def afiseaza_pagina_curenta(self, token):
+        if token != self.load_token:
+            return
+            
+        for widget in self.galerie_imagini.winfo_children():
+            widget.destroy()
+
+        total = len(self.lista_date_imagini)
+        pagini_totale = max(1, (total + self.imagini_per_pagina - 1) // self.imagini_per_pagina)
+        
+        self.lbl_paginare.configure(text=f"Pagină: {self.pagina_curenta + 1} / {pagini_totale} (Total: {total})")
+        self.btn_prev.configure(state="normal" if self.pagina_curenta > 0 else "disabled")
+        self.btn_next.configure(state="normal" if self.pagina_curenta < pagini_totale - 1 else "disabled")
+
+        if total == 0:
+            lbl = customtkinter.CTkLabel(self.galerie_imagini, text="Nu există imagini în această categorie.", font=("Roboto", 16))
+            lbl.pack(pady=40)
+            return
+
+        start_idx = self.pagina_curenta * self.imagini_per_pagina
+        end_idx = min(start_idx + self.imagini_per_pagina, total)
+        imagini_de_procesat = self.lista_date_imagini[start_idx:end_idx]
+
+        lbl_loading = customtkinter.CTkLabel(self.galerie_imagini, text="Se afișează pagina...", font=("Roboto", 16))
+        lbl_loading.pack(pady=40)
+
+        def proceseaza_chunk():
+            if token != self.load_token: return
+            rezultate_ui = []
             c, r, max_c = 0, 0, 6
-            for cale_c, n_f, n_fara, n_clasa_ef, este_ad in lista:
+            
+            for cale_c, f_name, n_fara, n_clasa_ef, este_ad in imagini_de_procesat:
+                if token != self.load_token: return
                 try:
-                    if cale_c in self.thumbnail_cache:
-                        img_n, img_h = self.thumbnail_cache[cale_c]
+                    deseneaza_triunghi = (self.clasa_selectata is None and este_ad)
+                    cache_key = f"{cale_c}_triunghi_{deseneaza_triunghi}"
+
+                    if cache_key in self.thumbnail_cache:
+                        img_n, img_hx, img_ht = self.thumbnail_cache[cache_key]
                     else:
                         orig = Image.open(cale_c)
-                        if orig.mode in ("RGBA", "LA") or (
-                            orig.mode == "P" and "transparency" in orig.info
-                        ):
-                            bg = Image.new("RGBA", orig.size, "#2b2b2b")
-                            orig = Image.alpha_composite(
-                                bg, orig.convert("RGBA")
-                            ).convert("RGB")
+                        # Optimizare: thumbnail este mult mai rapid decât resize!
+                        orig.thumbnail((150, 150), Image.Resampling.LANCZOS)
+                        
+                        if orig.mode in ("RGBA", "LA") or (orig.mode == "P" and "transparency" in orig.info):
+                            bg = Image.new("RGB", orig.size, "#2b2b2b")
+                            if "transparency" in orig.info:
+                                bg.paste(orig, mask=orig.convert("RGBA").split()[3])
+                            else:
+                                bg.paste(orig, mask=orig.split()[3] if orig.mode == "RGBA" else orig.split()[1])
+                            pil_i = bg
                         else:
-                            orig = orig.convert("RGB")
+                            pil_i = orig.convert("RGB")
 
-                        pil_i = orig.resize(
-                            (150, 150), Image.Resampling.LANCZOS
-                        )
-                        if self.clasa_selectata is None and este_ad:
-                            d_b = ImageDraw.Draw(pil_i)
-                            d_b.polygon(
-                                [(149, 0), (119, 0), (149, 30)], fill="#1f538d"
-                            )
+                        pil_n = pil_i.copy()
+                        pil_hx = pil_i.copy()
+                        pil_ht = pil_i.copy()
 
-                        i_n, i_h = pil_i.copy(), pil_i.copy()
+                        if deseneaza_triunghi:
+                            d_n = ImageDraw.Draw(pil_n)
+                            d_n.polygon([(149, 0), (119, 0), (149, 30)], fill="#1f538d")
+                            d_hx = ImageDraw.Draw(pil_hx)
+                            d_hx.polygon([(149, 0), (119, 0), (149, 30)], fill="#1f538d")
+                            d_ht = ImageDraw.Draw(pil_ht)
+                            d_ht.polygon([(149, 0), (119, 0), (149, 30)], fill="#3182ce")
 
                         def draw_x(im, c_x):
                             dr = ImageDraw.Draw(im)
-                            dr.line(
-                                [(5, 5), (13, 13)], fill="#000000", width=3
-                            )
-                            dr.line(
-                                [(5, 13), (13, 5)], fill="#000000", width=3
-                            )
+                            dr.line([(5, 5), (13, 13)], fill="#000000", width=3)
+                            dr.line([(5, 13), (13, 5)], fill="#000000", width=3)
                             dr.line([(5, 5), (13, 13)], fill=c_x, width=1)
                             dr.line([(5, 13), (13, 5)], fill=c_x, width=1)
 
-                        draw_x(i_n, "#888888")
-                        draw_x(i_h, "#e0e0e0")
+                        draw_x(pil_n, "#888888")
+                        draw_x(pil_hx, "#e0e0e0")
+                        draw_x(pil_ht, "#888888")
 
-                        img_n = customtkinter.CTkImage(
-                            light_image=i_n, dark_image=i_n, size=(150, 150)
-                        )
-                        img_h = customtkinter.CTkImage(
-                            light_image=i_h, dark_image=i_h, size=(150, 150)
-                        )
-                        self.thumbnail_cache[cale_c] = (img_n, img_h)
+                        img_n = customtkinter.CTkImage(light_image=pil_n, dark_image=pil_n, size=(150, 150))
+                        img_hx = customtkinter.CTkImage(light_image=pil_hx, dark_image=pil_hx, size=(150, 150))
+                        img_ht = customtkinter.CTkImage(light_image=pil_ht, dark_image=pil_ht, size=(150, 150))
+                        
+                        self.thumbnail_cache[cache_key] = (img_n, img_hx, img_ht)
 
-                    self.imagini_salvate.extend([img_n, img_h])
-                    n_scurt = n_f if len(n_f) < 15 else n_f[:12] + "..."
-                    t_et = (
-                        f"[{n_clasa_ef.upper()}]\n{n_scurt}"
-                        if self.clasa_selectata is None
-                        else n_scurt
-                    )
+                    n_scurt = f_name if len(f_name) < 15 else f_name[:12] + "..."
+                    t_et = f"[{n_clasa_ef.upper()}]\n{n_scurt}" if self.clasa_selectata is None else n_scurt
 
-                    def add_ui(cc, rc, imn, imh, pac, nfe, nce, tet):
-                        cadru = customtkinter.CTkFrame(
-                            self.galerie_imagini,
-                            fg_color="transparent",
-                            corner_radius=0,
-                        )
-                        cadru.grid(row=rc, column=cc, padx=15, pady=15)
-                        cont = customtkinter.CTkFrame(
-                            cadru, fg_color="transparent"
-                        )
-                        cont.pack()
-                        ico = customtkinter.CTkLabel(
-                            cont, text="", image=imn, cursor="hand2"
-                        )
-                        ico.pack()
-                        lbl = customtkinter.CTkLabel(
-                            cont, text=tet, font=("Roboto", 12), cursor="hand2"
-                        )
-                        lbl.pack(pady=(4, 0))
-
-                        self._bind_scroll_la_widget(
-                            cadru, self._pe_rotire_galerie
-                        )
-                        self._bind_scroll_la_widget(
-                            cont, self._pe_rotire_galerie
-                        )
-                        self._bind_scroll_la_widget(
-                            ico, self._pe_rotire_galerie
-                        )
-                        self._bind_scroll_la_widget(
-                            lbl, self._pe_rotire_galerie
-                        )
-
-                        hov_x = [False]
-
-                        def m(e):
-                            in_x = e.x <= 20 and e.y <= 20
-                            if in_x and not hov_x[0]:
-                                hov_x[0] = True
-                                ico.configure(image=imh)
-                            elif not in_x and hov_x[0]:
-                                hov_x[0] = False
-                                ico.configure(image=imn)
-
-                        def l(e):
-                            hov_x[0] = False
-                            ico.configure(image=imn)
-                            self._pe_leave_imagine(e)
-
-                        def cl(e):
-                            (
-                                self.sterge_imagine(pac, nfe, nce)
-                                if e.x <= 20 and e.y <= 20
-                                else self.editeaza_adnotare(pac, nce)
-                            )
-
-                        ico.bind("<Motion>", m)
-                        ico.bind("<Leave>", l)
-                        ico.bind("<Button-1>", cl)
-                        ico.bind("<Enter>", lambda e: self._pe_enter_imagine(e, pac))
-
-                    self.after(
-                        0,
-                        add_ui,
-                        c,
-                        r,
-                        img_n,
-                        img_h,
-                        cale_c,
-                        n_fara,
-                        n_clasa_ef,
-                        t_et,
-                    )
+                    rezultate_ui.append((c, r, img_n, img_hx, img_ht, cale_c, n_fara, n_clasa_ef, t_et, deseneaza_triunghi))
+                    
                     c += 1
                     if c >= max_c:
                         c = 0
                         r += 1
                 except Exception as e:
-                    print(f"Eroare img {cale_c}: {e}")
+                    print(f"Eroare procesare thumbnail {cale_c}: {e}")
+            
+            if token == self.load_token:
+                self.after(0, self._randeaza_UI_final, rezultate_ui, lbl_loading, token)
 
-        threading.Thread(target=proc_async, daemon=True).start()
+        threading.Thread(target=proceseaza_chunk, daemon=True).start()
+
+    def _randeaza_UI_final(self, rezultate_ui, lbl_loading, token):
+        if token != self.load_token: return
+        
+        lbl_loading.destroy()
+        self.imagini_salvate.clear()
+        
+        for item in rezultate_ui:
+            cc, rc, imn, imhx, imht, pac, nfe, nce, tet, deseneaza_triunghi = item
+            self.imagini_salvate.extend([imn, imhx, imht])
+            try:
+                cadru = customtkinter.CTkFrame(self.galerie_imagini, fg_color="transparent", corner_radius=0)
+                cadru.grid(row=rc, column=cc, padx=15, pady=15)
+                cont = customtkinter.CTkFrame(cadru, fg_color="transparent")
+                cont.pack()
+                ico = customtkinter.CTkLabel(cont, text="", image=imn, cursor="hand2")
+                ico.pack()
+                lbl = customtkinter.CTkLabel(cont, text=tet, font=("Roboto", 12), cursor="hand2")
+                lbl.pack(pady=(4, 0))
+
+                self._bind_scroll_la_widget(cadru, self._pe_rotire_galerie)
+                self._bind_scroll_la_widget(cont, self._pe_rotire_galerie)
+                self._bind_scroll_la_widget(ico, self._pe_rotire_galerie)
+                self._bind_scroll_la_widget(lbl, self._pe_rotire_galerie)
+
+                stare_hover = [0]
+                def m(e, im_n=imn, im_hx=imhx, im_ht=imht, dt=deseneaza_triunghi, ic=ico):
+                    in_x = e.x <= 20 and e.y <= 20
+                    in_triangle = dt and (e.x >= 119 and e.y >= 0 and e.y <= (e.x - 119))
+                    if in_x:
+                        if stare_hover[0] != 1: stare_hover[0] = 1; ic.configure(image=im_hx)
+                    elif in_triangle:
+                        if stare_hover[0] != 2: stare_hover[0] = 2; ic.configure(image=im_ht)
+                    else:
+                        if stare_hover[0] != 0: stare_hover[0] = 0; ic.configure(image=im_n)
+
+                def l(e, im_n=imn, ic=ico):
+                    stare_hover[0] = 0; ic.configure(image=im_n); self._pe_leave_imagine(e)
+
+                def cl(e, pac_val=pac, nfe_val=nfe, nce_val=nce, dt=deseneaza_triunghi):
+                    in_x = e.x <= 20 and e.y <= 20
+                    in_triangle = dt and (e.x >= 119 and e.y >= 0 and e.y <= (e.x - 119))
+                    if in_x: self.sterge_imagine(pac_val, nfe_val, nce_val)
+                    elif in_triangle: self.scoate_din_clasa(pac_val, nfe_val, nce_val)
+                    else: self.editeaza_adnotare(pac_val, nce_val)
+
+                ico.bind("<Motion>", m)
+                ico.bind("<Leave>", l)
+                ico.bind("<Button-1>", cl)
+                ico.bind("<Enter>", lambda e, p=pac: self._pe_enter_imagine(e, p))
+            except Exception as ex:
+                print(f"Eroare la randarea elementului UI: {ex}")
 
 
 if __name__ == "__main__":
