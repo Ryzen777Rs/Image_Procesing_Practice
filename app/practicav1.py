@@ -397,6 +397,21 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.creeaza_pagini()
         self.arata_pagina_principala()
 
+        def rotunjeste_imaginea(self, imagine_pil, raza):
+        # 1. Ne asigurăm că imaginea suportă transparență (RGBA)
+            imagine_pil = imagine_pil.convert("RGBA")
+            
+            # 2. Creăm o mască invizibilă (neagră) de aceeași dimensiune
+            masca = Image.new("L", imagine_pil.size, 0)
+            draw = ImageDraw.Draw(masca)
+            
+            # 3. Desenăm un dreptunghi cu colțuri rotunde (alb) pe mască
+            draw.rounded_rectangle((0, 0, imagine_pil.size[0], imagine_pil.size[1]), radius=raza, fill=255)
+            
+            # 4. Decupăm imaginea originală folosind masca
+            imagine_pil.putalpha(masca)
+            return imagine_pil
+
     def _bind_scroll_la_widget(self, widget, functie_scroll):
         if widget is None:
             return
@@ -413,55 +428,165 @@ class TrainWindow(customtkinter.CTkToplevel):
             widget._canvas.bind("<Button-5>", functie_scroll, add="+")
 
     def creeaza_pagini(self):
-        self.main_page = customtkinter.CTkFrame(self, fg_color="transparent")
+        # ==========================================
+        # FUNDALUL GENERAL (Culoarea principală Discord)
+        # ==========================================
+        self.main_page = customtkinter.CTkFrame(self, fg_color="#1e1f22")
+        
+        # ==========================================
+        # WRAPPER PENTRU CENTRARE VERTICALĂ ȘI ORIZONTALĂ
+        # ==========================================
+        # Acest frame invizibil ține titlul și cardurile împreună în centrul absolut
+        center_wrapper = customtkinter.CTkFrame(self.main_page, fg_color="transparent")
+        center_wrapper.pack(expand=True) 
 
         title = customtkinter.CTkLabel(
-            master=self.main_page, text="Sigma", font=("Roboto", 32, "bold")
+            master=center_wrapper, 
+            text="Sigma", 
+            font=("Roboto", 40, "bold"),
+            text_color="#f2f3f5" # Un alb-gri fin, specific textului din Discord
         )
-        title.pack(pady=(20, 0), padx=10)
+        title.pack(pady=(0, 40)) # Spațiu curat doar sub titlu, pentru a-l separa de carduri
 
-        frame_1 = customtkinter.CTkFrame(master=self.main_page)
-        frame_1.pack(pady=20, padx=60, fill="both", expand=True)
+        frame_1 = customtkinter.CTkFrame(master=center_wrapper, fg_color="transparent")
+        frame_1.pack(fill="both", expand=True)
+        
         frame_1.columnconfigure(0, weight=1)
         frame_1.columnconfigure(1, weight=1)
         frame_1.columnconfigure(2, weight=1)
 
-        column1 = customtkinter.CTkFrame(
-            master=frame_1, width=100, corner_radius=0
+        # ==========================================
+        # ÎNCĂRCARE IMAGINI
+        # ==========================================
+        cale_logos = os.path.join(self.DIRECTOR_CURENT, "logos")
+        cale_galerie = os.path.join(cale_logos, "misty mountains.jpg")
+        cale_invatare = os.path.join(cale_logos, "gears.jpeg")
+        cale_inapoi = os.path.join(cale_logos, "detection in real time.jpg")
+
+        try:
+            # 1. Deschidem imaginile brute
+            img_g_bruta = Image.open(cale_galerie)
+            img_i_bruta = Image.open(cale_invatare)
+            img_b_bruta = Image.open(cale_inapoi)
+
+            # 2. Le tăiem la 400x400 din start ca rotunjirea să fie precisă
+            img_g_bruta = img_g_bruta.resize((400, 400))
+            img_i_bruta = img_i_bruta.resize((400, 400))
+            img_b_bruta = img_b_bruta.resize((400, 400))
+
+            # 3. Aplicăm funcția de rotunjire (raza 16 este ideală)
+            raza_rotunjire = 16
+            img_g_rotunda = self.rotunjeste_imaginea(img_g_bruta, raza_rotunjire)
+            img_i_rotunda = self.rotunjeste_imaginea(img_i_bruta, raza_rotunjire)
+            img_b_rotunda = self.rotunjeste_imaginea(img_b_bruta, raza_rotunjire)
+
+            # 4. Le predăm către CustomTkinter
+            img_galerie = customtkinter.CTkImage(img_g_rotunda, size=(400, 400))
+            img_invatare = customtkinter.CTkImage(img_i_rotunda, size=(400, 400))
+            img_inapoi = customtkinter.CTkImage(img_b_rotunda, size=(400, 400))
+            
+        except Exception as e:
+            print(f"Imaginile pentru meniu nu au putut fi încărcate: {e}")
+            img_galerie = img_invatare = img_inapoi = None
+
+        # Definim culoarea cardului pentru a nu o repeta manual de 3 ori
+        culoare_card = "#2b2d31"
+
+        # ==========================================
+        # COLOANA 1: CARD GALERIE
+        # ==========================================
+        column1 = customtkinter.CTkFrame(master=frame_1, fg_color="transparent")
+        column1.grid(row=0, column=0, sticky="nsew", padx=20)
+        
+        card1 = customtkinter.CTkFrame(
+            master=column1, 
+            fg_color=culoare_card, 
+            corner_radius=12,
+            border_width=0
         )
-        column1.grid(row=0, column=0, sticky="nsew", padx=(20, 10), pady=20)
+        card1.pack(expand=True, fill="both") 
+
+        lbl_img1 = customtkinter.CTkLabel(master=card1, text="[Fără Imagine]" if not img_galerie else "", image=img_galerie)
+        # AM MODIFICAT AICI: padx și pady crescute la 25
+        lbl_img1.pack(pady=(25, 15), padx=25) 
+
         button1 = customtkinter.CTkButton(
-            master=column1,
+            master=card1,
             text="Galerie",
+            height=50, # AM MODIFICAT AICI: height crescut de la 40 la 50
+            font=("Roboto", 18, "bold"),
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=self.arata_pagina_galerie,
         )
-        button1.pack(pady=10, padx=10)
+        # AM MODIFICAT AICI: padx crescut la 25 și pady la (0, 25) pentru baza cardului
+        button1.pack(fill="x", padx=50, pady=(20, 25))
 
-        column2 = customtkinter.CTkFrame(
-            master=frame_1, width=100, corner_radius=0
+
+        # ==========================================
+        # COLOANA 2: CARD ÎNVĂȚARE
+        # ==========================================
+        column2 = customtkinter.CTkFrame(master=frame_1, fg_color="transparent")
+        column2.grid(row=0, column=1, sticky="nsew", padx=20)
+        
+        card2 = customtkinter.CTkFrame(
+            master=column2, 
+            fg_color=culoare_card,
+            corner_radius=12,
+            border_width=0
         )
-        column2.grid(row=0, column=1, sticky="nsew", padx=(10, 20), pady=20)
+        card2.pack(expand=True, fill="both")
+
+        lbl_img2 = customtkinter.CTkLabel(master=card2, text="[Fără Imagine]" if not img_invatare else "", image=img_invatare)
+        # AM MODIFICAT AICI
+        lbl_img2.pack(pady=(25, 15), padx=25)
+
         button2 = customtkinter.CTkButton(
-            master=column2,
+            master=card2,
             text="Învățare",
+            height=50, # AM MODIFICAT AICI
+            font=("Roboto", 18, "bold"),
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=self.arata_pagina_invatare,
         )
-        button2.pack(pady=10, padx=10)
+        # AM MODIFICAT AICI
+        button2.pack(fill="x", padx=50, pady=(20, 25))
 
-        column3 = customtkinter.CTkFrame(
-            master=frame_1, width=100, corner_radius=0
+
+        # ==========================================
+        # COLOANA 3: CARD ÎNAPOI
+        # ==========================================
+        column3 = customtkinter.CTkFrame(master=frame_1, fg_color="transparent")
+        column3.grid(row=0, column=2, sticky="nsew", padx=20)
+        
+        card3 = customtkinter.CTkFrame(
+            master=column3, 
+            fg_color=culoare_card,
+            corner_radius=12,
+            border_width=0
         )
-        column3.grid(row=0, column=2, sticky="nsew", padx=(10, 20), pady=20)
+        card3.pack(expand=True, fill="both")
+
+        lbl_img3 = customtkinter.CTkLabel(master=card3, text="[Fără Imagine]" if not img_inapoi else "", image=img_inapoi)
+        # AM MODIFICAT AICI
+        lbl_img3.pack(pady=(25, 15), padx=25)
+
         button3 = customtkinter.CTkButton(
-            master=column3,
-            text="Închide",
+            master=card3,
+            text="Înapoi",
+            height=50, # AM MODIFICAT AICI
+            font=("Roboto", 18, "bold"),
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=lambda: (
                 self.master.event_generate("<<CloseTrainWindow>>")
                 if hasattr(self, "master")
                 else self.destroy()
             ),
         )
-        button3.pack(pady=10, padx=10)
+        # AM MODIFICAT AICI
+        button3.pack(fill="x", padx=50, pady=(20, 25))
 
         self.second_page = customtkinter.CTkFrame(self, fg_color="transparent")
 
