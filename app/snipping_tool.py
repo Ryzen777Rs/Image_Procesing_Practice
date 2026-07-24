@@ -28,6 +28,7 @@ class SnippingAnnotator:
         self.classes = self.load_classes()
 
         self.root = None
+        self.canvas = None
         self.points = []
         self.selected_point_idx = None
         self.is_dragging = False
@@ -41,7 +42,6 @@ class SnippingAnnotator:
 
     def load_classes(self):
         """Încărcăm clasele curente din aplicația principală sau din fișierul classes.txt."""
-        # 1. Dacă aplicația principală transmite lista activă de clase, o folosim direct
         if self.parent_app and hasattr(self.parent_app, "classes"):
             return [
                 c
@@ -49,7 +49,6 @@ class SnippingAnnotator:
                 if c.lower() not in ["nothing", "all"]
             ]
 
-        # 2. Altfe, citim din fișierul classes.txt
         if os.path.exists(self.classes_file):
             with open(self.classes_file, "r", encoding="utf-8") as f:
                 cls_list = [
@@ -73,10 +72,18 @@ class SnippingAnnotator:
         keyboard.add_hotkey(self.hotkey, self._declanseaza_din_thread_sigur)
 
     def _declanseaza_din_thread_sigur(self):
-        if self.parent_app:
-            self.parent_app.after(0, self._porneste_procedura_captura)
-        elif self.root:
-            self.root.after(0, self._porneste_procedura_captura)
+        """Redirecționăm executarea către thread-ul principal Tkinter în mod sigur."""
+        target = self.parent_app if self.parent_app else self.root
+        if target:
+            target.after(0, self._verifica_si_porneste_captura)
+        else:
+            self._verifica_si_porneste_captura()
+
+    def _verifica_si_porneste_captura(self):
+        # PROTECȚIE: Dacă fereastra este deja deschisă, ignorăm
+        if self.root is not None and self.root.winfo_exists():
+            return
+        self._porneste_procedura_captura()
 
     def _porneste_procedura_captura(self):
         if self.parent_app and hasattr(self.parent_app, "is_running"):
@@ -122,11 +129,12 @@ class SnippingAnnotator:
     def _deschide_interfata_cu_imagine(
         self, original_img, image_path, default_class
     ):
-        self.original_img = original_img
+        # Asigurăm conversia în RGB pentru a evita erorile la salvarea JPEG
+        self.original_img = original_img.convert("RGB")
         self.current_image_path = image_path
         self.current_class_folder = default_class
 
-        enhancer = ImageEnhance.Brightness(original_img)
+        enhancer = ImageEnhance.Brightness(self.original_img)
         dimmed_img = enhancer.enhance(0.4)
 
         self.create_fullscreen_window(dimmed_img)
@@ -175,7 +183,6 @@ class SnippingAnnotator:
             except Exception as e:
                 print(f"[Eroare citire etichetă]: {e}")
 
-        # Reacordăm focusul pe canvas după ce adnotarea a fost încărcată
         if hasattr(self, "canvas") and self.canvas:
             self.canvas.focus_set()
 
@@ -183,28 +190,43 @@ class SnippingAnnotator:
         if self.root:
             try:
                 self.root.destroy()
-            except:
+            except Exception:
                 pass
             self.root = None
 
-        # Reîncărcăm dinamic clasele actuale pentru a elimina variantele vechi/șterse
         self.classes = self.load_classes()
 
-        self.width, self.height = bg_image.size
         self.root = tk.Toplevel()
         self.root.attributes("-fullscreen", True)
         self.root.attributes("-topmost", True)
-        self.root.overrideredirect(True)
-        self.root.config(cursor="crosshair")
+        self.root.config(cursor="crosshair", bg="black")
+
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+
+        img_w, img_h = bg_image.size
+        scale = min(screen_w / img_w, screen_h / img_h)
+        new_w = int(img_w * scale)
+        new_h = int(img_h * scale)
+
+        try:
+            resample_filter = Image.Resampling.LANCZOS
+        except AttributeError:
+            resample_filter = Image.ANTIALIAS
+
+        resized_bg_image = bg_image.resize((new_w, new_h), resample_filter)
+
+        self.width = new_w
+        self.height = new_h
 
         self.points = []
         self.class_has_changed = False
-        self.tk_bg_image = ImageTk.PhotoImage(bg_image)
+        self.tk_bg_image = ImageTk.PhotoImage(resized_bg_image)
 
         self.canvas = tk.Canvas(
-            self.root, width=self.width, height=self.height, highlightthickness=0
+            self.root, width=self.width, height=self.height, highlightthickness=0, bg="black"
         )
-        self.canvas.pack(fill="both", expand=True)
+        self.canvas.pack(expand=True)
         self.canvas.create_image(0, 0, image=self.tk_bg_image, anchor="nw")
 
         ctk.set_appearance_mode("dark")
@@ -217,6 +239,9 @@ class SnippingAnnotator:
         )
         self.top_panel.place(relx=0.5, y=30, anchor="n")
 
+        # ----------------------------------------------------------------------
+        # WIDGET-URI PANOU
+        # ----------------------------------------------------------------------
         ctk.CTkLabel(
             self.top_panel,
             text="Clasă:",
@@ -275,6 +300,41 @@ class SnippingAnnotator:
             text_color="#8a8a93",
         ).pack(side="left", padx=20)
 
+        # SIMBOL DRAG & DROP
+        self.drag_handle = ctk.CTkLabel(
+            self.top_panel,
+            text="✥",
+            font=("Arial", 18),
+            text_color="#ffffff",
+            cursor="fleur",
+            width=20
+        )
+        self.drag_handle.pack(side="right", padx=(5, 15))
+
+        # ----------------------------------------------------------------------
+        # LOGICĂ DRAG & DROP FĂRĂ SĂRITURI
+        # ----------------------------------------------------------------------
+        def on_drag_start(event):
+            self.top_panel._panel_start_x = self.top_panel.winfo_x()
+            self.top_panel._panel_start_y = self.top_panel.winfo_y()
+            self.top_panel._drag_start_x = event.x_root
+            self.top_panel._drag_start_y = event.y_root
+
+        def on_drag_motion(event):
+            dx = event.x_root - self.top_panel._drag_start_x
+            dy = event.y_root - self.top_panel._drag_start_y
+            new_x = self.top_panel._panel_start_x + dx
+            new_y = self.top_panel._panel_start_y + dy
+
+            # Setează direct în coordonate absolute fixe
+            self.top_panel.place(relx=0, rely=0, x=new_x, y=new_y, anchor="nw")
+
+        self.drag_handle.bind("<ButtonPress-1>", on_drag_start)
+        self.drag_handle.bind("<B1-Motion>", on_drag_motion)
+
+        # ----------------------------------------------------------------------
+        # BINDING-URI EVENIMENTE
+        # ----------------------------------------------------------------------
         self.canvas.bind("<Button-1>", self.on_left_click)
         self.canvas.bind("<ButtonPress-3>", self.on_right_press)
         self.canvas.bind("<B3-Motion>", self.on_right_drag)
@@ -288,17 +348,11 @@ class SnippingAnnotator:
             self.save_annotation()
             return "break"
 
-        # Binds pe elemente
-        for w in [self.root, self.canvas, self.top_panel, self.combo]:
+        for w in [self.root, self.canvas, self.top_panel]:
             w.bind("<Escape>", _pe_esc)
             w.bind("<Return>", _pe_enter)
             w.bind("<KP_Enter>", _pe_enter)
 
-        self.root.bind_all("<Escape>", _pe_esc)
-        self.root.bind_all("<Return>", _pe_enter)
-        self.root.bind_all("<KP_Enter>", _pe_enter)
-
-        # Handler de rezervă pentru oricare tasta apăsată
         def _pe_tasta_generala(event):
             if event.keysym == "Escape":
                 self.close()
@@ -309,45 +363,35 @@ class SnippingAnnotator:
 
         self.root.bind("<Key>", _pe_tasta_generala)
 
-        if hasattr(self.combo, "_entry") and self.combo._entry:
-            self.combo._entry.bind("<Escape>", _pe_esc)
-            self.combo._entry.bind("<Return>", _pe_enter)
-            self.combo._entry.bind("<KP_Enter>", _pe_enter)
-
         def _reda_focus_canvas(*args):
-            self.canvas.focus_set()
+            if self.canvas:
+                self.canvas.focus_set()
 
         self.combo.bind("<FocusOut>", _reda_focus_canvas)
 
-        # Forțăm focusul atât imediat cât și asincron
         self.root.update_idletasks()
         self.root.focus_force()
         self.canvas.focus_set()
 
-        self.root.after(
-            50,
-            lambda: (
-                self.root.focus_force() if self.root else None,
-                self.canvas.focus_set() if self.canvas else None,
-            ),
-        )
-        self.root.after(
-            200,
-            lambda: (
-                self.root.focus_force() if self.root else None,
-                self.canvas.focus_set() if self.canvas else None,
-            ),
-        )
-
-        try:
-            self.root.grab_set()
-        except:
-            pass
-
     def on_left_click(self, event):
         self.canvas.focus_set()
-        if event.y < 90 and 300 < event.x < (self.width - 300):
+
+        # Coordonatele click-ului raportate la root
+        canvas_x = self.canvas.winfo_x()
+        canvas_y = self.canvas.winfo_y()
+        root_click_x = event.x + canvas_x
+        root_click_y = event.y + canvas_y
+
+        # Limitele dinamice ale panoului de sus
+        px1 = self.top_panel.winfo_x()
+        py1 = self.top_panel.winfo_y()
+        px2 = px1 + self.top_panel.winfo_width()
+        py2 = py1 + self.top_panel.winfo_height()
+
+        # Dacă s-a făcut click peste panoul de control, ignorăm punctul
+        if px1 <= root_click_x <= px2 and py1 <= root_click_y <= py2:
             return
+
         self.points.append((event.x, event.y))
         self.redraw()
 
@@ -359,14 +403,14 @@ class SnippingAnnotator:
             self.is_dragging = False
 
     def on_right_drag(self, event):
-        if self.selected_point_idx is not None:
+        if self.selected_point_idx is not None and self.selected_point_idx < len(self.points):
             self.is_dragging = True
             self.points[self.selected_point_idx] = (event.x, event.y)
             self.redraw()
 
     def on_right_release(self, event):
         if self.selected_point_idx is not None:
-            if not self.is_dragging:
+            if not self.is_dragging and self.selected_point_idx < len(self.points):
                 self.points.pop(self.selected_point_idx)
                 self.redraw()
             self.selected_point_idx = None
@@ -439,14 +483,14 @@ class SnippingAnnotator:
                 if os.path.exists(cale_txt):
                     try:
                         os.remove(cale_txt)
-                    except:
+                    except Exception:
                         pass
 
             target_all_path = os.path.join(
                 self.all_img_dir, base_filename + ".jpg"
             )
             try:
-                self.original_img.save(target_all_path, quality=95)
+                self.original_img.convert("RGB").save(target_all_path, quality=95)
             except Exception as e:
                 print(f"[Eroare salvare în all]: {e}")
 
@@ -464,7 +508,7 @@ class SnippingAnnotator:
                 ) != os.path.abspath(target_all_path):
                     try:
                         os.remove(cale_clasa)
-                    except:
+                    except Exception:
                         pass
         else:
             timestamp = int(time.time() * 1000)
@@ -473,7 +517,7 @@ class SnippingAnnotator:
                 self.all_img_dir, base_filename + ".jpg"
             )
             try:
-                self.original_img.save(target_all_path, quality=95)
+                self.original_img.convert("RGB").save(target_all_path, quality=95)
             except Exception as e:
                 print(f"[Eroare salvare screenshot nou în all]: {e}")
 
@@ -481,13 +525,11 @@ class SnippingAnnotator:
         class_name = self.class_var.get().strip()
         self.last_used_class = class_name
 
-        # Dacă este selectată clasa "nothing" sau "all", salvăm imaginea în folderul 'all'
         if class_name.lower() in ["nothing", "all"]:
             self._curata_eticheta_si_muta_in_all()
             self.close()
             return
 
-        # Înregistrăm clasa nouă dacă nu exista în lista claselor
         if class_name not in self.classes:
             self.classes.append(class_name)
             combo_values = ["nothing"] + [
@@ -515,7 +557,7 @@ class SnippingAnnotator:
                 if os.path.exists(old_txt):
                     try:
                         os.remove(old_txt)
-                    except:
+                    except Exception:
                         pass
                 old_img = os.path.join(
                     self.img_dir, old_class, base_filename + ".jpg"
@@ -523,7 +565,7 @@ class SnippingAnnotator:
                 if os.path.exists(old_img):
                     try:
                         os.remove(old_img)
-                    except:
+                    except Exception:
                         pass
         else:
             timestamp = int(time.time() * 1000)
@@ -536,20 +578,18 @@ class SnippingAnnotator:
 
         target_img_path = os.path.join(class_img_dir, base_filename + ".jpg")
 
-        # Salvăm imaginea în folderul clasei selectate
-        self.original_img.save(target_img_path, quality=95)
+        # Salvare sigură RGB
+        self.original_img.convert("RGB").save(target_img_path, quality=95)
 
-        # Curățăm vechea locație a imaginii dacă s-a mutat
         if self.current_image_path and os.path.abspath(
             self.current_image_path
         ) != os.path.abspath(target_img_path):
             try:
                 if os.path.exists(self.current_image_path):
                     os.remove(self.current_image_path)
-            except:
+            except Exception:
                 pass
 
-        # Salvăm fișierul .txt de adnotare doar dacă există cel puțin 3 puncte desenate
         target_txt_path = os.path.join(class_lbl_dir, base_filename + ".txt")
         if len(self.points) >= 3:
             yolo_coords = [
@@ -559,11 +599,10 @@ class SnippingAnnotator:
             with open(target_txt_path, "w", encoding="utf-8") as f:
                 f.write(f"{class_id} " + " ".join(yolo_coords) + "\n")
         else:
-            # Dacă nu sunt puncte, ne asigurăm că nu rămâne un fișier de adnotare vechi
             if os.path.exists(target_txt_path):
                 try:
                     os.remove(target_txt_path)
-                except:
+                except Exception:
                     pass
 
         self.close()
@@ -589,18 +628,8 @@ class SnippingAnnotator:
     def close(self):
         if self.root:
             try:
-                self.root.unbind_all("<Escape>")
-                self.root.unbind_all("<Return>")
-                self.root.unbind_all("<KP_Enter>")
-            except:
-                pass
-            try:
-                self.root.grab_release()
-            except:
-                pass
-            try:
                 self.root.destroy()
-            except:
+            except Exception:
                 pass
             self.root = None
         self._reporneste_fluxul_principal()
