@@ -1,0 +1,35 @@
+
+.venv/
+.uv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+
+.cache_miniaturi/
+**/.cache_miniaturi/
+
+
+runs/
+**/runs/
+
+
+*.pt
+*.pth
+*.onnx
+*.engine
+
+
+app/models/*
+!app/models/.gitkeep
+"YOLO models/*"
+!"YOLO models/.gitkeep"
+
+
+app/images/*
+!app/images/.gitkeep
+app/labels/*
+!app/labels/.gitkeep
+
+
+.vscode/
