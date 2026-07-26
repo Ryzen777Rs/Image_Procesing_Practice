@@ -1,25 +1,16 @@
 import os
 import threading
 import time
+import urllib.request
 import cv2
 import customtkinter
 import mss
 from PIL import Image
 import tkinter as tk
-
-
-
-
-
-
-
-
-
-
-from script import ObjectDetector
+from launch_detector import ObjectDetector
 
 # IMPORTĂM CLASA DIN PRIMUL FIȘIER
-from practicav1 import TrainWindow
+from trainer_app import TrainWindow
 
 customtkinter.set_appearance_mode("dark")
 customtkinter.set_default_color_theme("dark-blue")
@@ -34,9 +25,9 @@ class MainApp(customtkinter.CTk):
         self.geometry("1280x720")
         self.resizable(True, True)
 
-
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        self.MODELS_DIR = os.path.join(current_dir, "models")
+        parent_dir = os.path.dirname(current_dir)
+        self.MODELS_DIR = os.path.join(parent_dir, "models")
         
         if not os.path.exists(self.MODELS_DIR):
             os.makedirs(self.MODELS_DIR)
@@ -46,6 +37,7 @@ class MainApp(customtkinter.CTk):
         self.is_running = True
         self.selected_mode = None
         
+        # Preluăm primul model disponibil, dacă există
         self.selected_model = self.get_first_available_model()
         self.confidence_threshold = 0.50
         self.latest_screen_img = None
@@ -83,6 +75,8 @@ class MainApp(customtkinter.CTk):
             number_of_steps=100,
             width=500,
             height=20,
+            button_color="#5865F2",       
+            button_hover_color="#4752C4", 
             command=self.on_slider_change,
         )
         self.confidence_slider.set(self.confidence_threshold)
@@ -92,16 +86,38 @@ class MainApp(customtkinter.CTk):
         self.buttons_row_frame = customtkinter.CTkFrame(master=self.bottom_frame, fg_color="transparent")
         self.buttons_row_frame.pack(side="top", fill="x")
 
-        display_name = self.selected_model.replace(".pt", "").upper() if self.selected_model else "NICIUN MODEL"
+        # CONFIGURARE BUTON MODEL
+        has_model = self.selected_model is not None
+        display_name = self.selected_model.replace(".pt", "").upper() if has_model else "INDISPONIBIL"
+        
         self.model_btn = customtkinter.CTkButton(
             master=self.buttons_row_frame,
             text=display_name,
             font=("Roboto", 14, "bold"),
             height=45,
             width=190,
+            fg_color="#5865F2" if has_model else "gray50",       
+            hover_color="#4752C4" if has_model else "gray50",
+            state="normal" if has_model else "disabled",
             command=self.show_dropup_menu,
         )
         self.model_btn.pack(side="left")
+
+        # BUTON PENTRU DESCĂRCARE MODELE YOLO (N, M, L)
+        self.btn_install_models = customtkinter.CTkButton(
+            master=self.buttons_row_frame,
+            text="Install Yolo models",
+            font=("Roboto", 12, "bold"),
+            height=45,
+            width=140,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
+            command=self.start_download_models,
+        )
+
+        # Afișăm butonul doar dacă NICIUNUL din modelele n, m, l nu există
+        if not self.check_standard_models_exist():
+            self.btn_install_models.pack(side="left", padx=(10, 0))
 
         self.btn_start = customtkinter.CTkButton(
             master=self.buttons_row_frame,
@@ -109,6 +125,8 @@ class MainApp(customtkinter.CTk):
             font=("Roboto", 16, "bold"),
             height=45,
             width=250,
+            fg_color="#5865F2",       
+            hover_color="#4752C4",
             state="disabled",
             command=self.execute_detection,
         )
@@ -139,7 +157,6 @@ class MainApp(customtkinter.CTk):
         )
         self.theme_btn.pack(side="right", padx=10)
 
-        # BUTONUL ANTRENEAZĂ ACUM DESCHIDE FEREASTRA TA NEW GENERATED
         self.create_btn = customtkinter.CTkButton(
             master=self.top_bar_frame,
             text="Antreneaza",
@@ -150,7 +167,7 @@ class MainApp(customtkinter.CTk):
             fg_color="#2b2b36",
             text_color="#ffd700",
             hover_color="#3f3f4e",
-            command=self.open_create, # Execută funcția modificată mai jos
+            command=self.open_create,
         )
         self.create_btn.pack(side="right", padx=10)
 
@@ -221,12 +238,57 @@ class MainApp(customtkinter.CTk):
         self.camera_thread.start()
         self.render_preview_ui()
 
+    def check_standard_models_exist(self):
+        """Verifică dacă există cel puțin unul dintre modelele n, m sau l în folder."""
+        standard_models = ["yolov8n.pt", "yolov8m.pt", "yolov8l.pt"]
+        if os.path.exists(self.MODELS_DIR):
+            for model in standard_models:
+                if os.path.exists(os.path.join(self.MODELS_DIR, model)):
+                    return True
+        return False
+
+    def start_download_models(self):
+        """Inițiază procesul de descărcare al modelelor în fundal."""
+        self.btn_install_models.configure(text="Downloading models...", state="disabled")
+        threading.Thread(target=self._download_models_worker, daemon=True).start()
+
+    def _download_models_worker(self):
+        """Descarcă modelele YOLO (Nano, Medium, Large) direct în folderul models."""
+        models_to_download = ["yolov8n.pt", "yolov8m.pt", "yolov8l.pt"]
+        for model_file in models_to_download:
+            dest_path = os.path.join(self.MODELS_DIR, model_file)
+            if not os.path.exists(dest_path):
+                url = f"https://github.com/ultralytics/assets/releases/download/v8.2.0/{model_file}"
+                try:
+                    urllib.request.urlretrieve(url, dest_path)
+                except Exception as e:
+                    print(f"[WARN] Nu s-a putut descarca {model_file}: {e}")
+
+        # Programăm actualizarea interfeței pe firul principal
+        self.after(0, self._on_download_complete)
+
+    def _on_download_complete(self):
+        """Ascunde butonul de instalare și reactivează selecția modelelor."""
+        self.btn_install_models.pack_forget()
+        self.selected_model = self.get_first_available_model()
+        if self.selected_model:
+            display_name = self.selected_model.replace(".pt", "").upper()
+            # Reactivăm butonul și îi redăm culoarea
+            self.model_btn.configure(
+                text=display_name,
+                state="normal",
+                fg_color="#5865F2",
+                hover_color="#4752C4"
+            )
+        print("[INFO] Modelele YOLO au fost instalate cu succes!")
+
     def get_first_available_model(self):
+        """Alege primul model .pt găsit. Dacă nu există, returnează None."""
         if os.path.exists(self.MODELS_DIR):
             files = [f for f in os.listdir(self.MODELS_DIR) if f.endswith(".pt")]
             if files:
                 return files[0]
-        return "yolov8n.pt"
+        return None
 
     def on_slider_change(self, value):
         self.confidence_threshold = value
@@ -240,7 +302,7 @@ class MainApp(customtkinter.CTk):
             pt_files = [f for f in os.listdir(self.MODELS_DIR) if f.endswith(".pt")]
 
         if not pt_files:
-            pt_files = ["yolov8n.pt"]
+            return # Dacă e gol, ieșim oricum pentru siguranță
 
         for model_file in pt_files:
             def select(m=model_file):
@@ -254,29 +316,18 @@ class MainApp(customtkinter.CTk):
         dropup_menu.post(x, y - menu_height)
 
     def open_create(self):
-        """Oprește camera, ascunde fereastra principală și deschide meniul de antrenare."""
-        # 1. Oprim preview-ul camerei (astfel cap.release() este apelat în worker)
         self.pause_camera_preview = True
-        
-        # Oferim un scurt răgaz (0.3 secunde) pentru ca thread-ul camerei 
-        # să apuce să închidă dispozitivul (cap.release())
         time.sleep(0.3) 
+        self.withdraw()
 
-        self.withdraw()  # Ascunde fereastra principală
-
-        # 2. Deschidem fereastra de antrenare
         train_win = TrainWindow(self)
-
-        # 3. Când utilizatorul închide fereastra de antrenare, reapărem fereastra principală
         train_win.protocol("WM_DELETE_WINDOW", lambda: self.reafiseaza_fereastra_principala(train_win))
 
     def reafiseaza_fereastra_principala(self, fereastra_secundara):
-        """Distruge fereastra secundară, arată fereastra principală și repornește camera."""
         fereastra_secundara.destroy()
-        self.deiconify()  # Readuce fereastra principală pe ecran
-
-        # Repornim camera web pentru preview
+        self.deiconify()
         self.pause_camera_preview = False
+
     def toggle_theme(self):
         current_mode = customtkinter.get_appearance_mode()
         if current_mode == "Dark":
@@ -350,6 +401,10 @@ class MainApp(customtkinter.CTk):
             print("[INFO] Detecția rulează deja!")
             return
 
+        if not self.selected_model:
+            print("[WARN] Niciun model selectat. Vă rugăm să instalați/descărcați modelele mai întâi!")
+            return
+
         self.is_detecting = True
 
         if self.selected_mode == "camera":
@@ -357,10 +412,6 @@ class MainApp(customtkinter.CTk):
             time.sleep(0.5)
 
         model_path = os.path.join(self.MODELS_DIR, self.selected_model)
-        
-        if not os.path.exists(model_path):
-            print(f"[WARN] Modelul {self.selected_model} nu mai există! Folosim modelul implicit.")
-            model_path = "yolov8n.pt" 
 
         detector = ObjectDetector(
             model_path=model_path,

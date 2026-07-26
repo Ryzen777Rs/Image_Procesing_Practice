@@ -271,6 +271,7 @@ class SnippingAnnotator:
             self.last_used_class = alegere
             self.canvas.focus_set()
 
+        # AICI AM MODIFICAT CULORILE PENTRU COMBOBOX (TEMA DISCORD)
         self.combo = ctk.CTkComboBox(
             self.top_panel,
             variable=self.class_var,
@@ -278,6 +279,10 @@ class SnippingAnnotator:
             command=pe_schimbare_clasa,
             font=("Roboto", 14),
             width=150,
+            border_color="#5865F2",
+            button_color="#5865F2",
+            button_hover_color="#4752C4",
+            dropdown_hover_color="#4752C4"
         )
         self.combo.pack(side="left", padx=10)
 
@@ -431,7 +436,7 @@ class SnippingAnnotator:
                     p1[1],
                     p2[0],
                     p2[1],
-                    fill="#00bfff",
+                    fill="#5865F2", # AICI AM MODIFICAT CULOAREA LINIEI (TEMA DISCORD)
                     width=2,
                     tags="annotation",
                 )
@@ -442,7 +447,7 @@ class SnippingAnnotator:
                     p1[1],
                     p2[0],
                     p2[1],
-                    fill="#00bfff",
+                    fill="#5865F2", # AICI AM MODIFICAT CULOAREA LINIEI PUNCTATE (TEMA DISCORD)
                     width=2,
                     dash=(5, 5),
                     tags="annotation",
@@ -455,7 +460,7 @@ class SnippingAnnotator:
                 y - r,
                 x + r,
                 y + r,
-                fill="#00bfff",
+                fill="#5865F2", # AICI AM MODIFICAT CULOAREA PUNCTELOR (TEMA DISCORD)
                 outline="white",
                 width=1.5,
                 tags="annotation",

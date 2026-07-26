@@ -4,23 +4,18 @@ import re
 from pathlib import Path
 import platform
 import shutil
-import subprocess
 import threading
 import time
 from tkinter import filedialog
 import urllib.parse
 import urllib.request
-import urllib.parse
-import urllib.request
-import urllib.error # Adăugat pentru a prinde erorile 403/404
-import platform
+import urllib.error
 import winreg
-import re
 import subprocess
 import customtkinter
 from PIL import Image, ImageDraw, ImageFilter, ImageGrab, UnidentifiedImageError
 
-from realtime_capture import RealtimeCaptureWindow
+from realtime_detector import RealtimeCaptureWindow
 
 try:
     import torch
@@ -37,11 +32,11 @@ try:
 except ImportError:
     YOLO_DISPONIBIL = False
 
-from snipping_tool import SnippingAnnotator
+from annotation_tool import SnippingAnnotator
 
 
 def detecteaza_hardware_sistem():
-    """Detectează procesorul (CPU) și placa video 100% nativ din Registrii Windows."""
+    """Detectează procesorul (CPU) și placa video 100% nativ din Registrii Windows, inclusiv generația GPU și suportul AMD ROCm."""
     
     sys_gpu_nume = ""
     gpu_nume = "GPU Nedetectat"
@@ -99,18 +94,41 @@ def detecteaza_hardware_sistem():
     total_threads = os.cpu_count() or 4
     sys_gpu_nume = obtine_gpu_din_registri()
 
-    # --- 3. VERIFICARE SUPORT CUDA (PyTorch) ---
+    # --- 3. VERIFICARE SUPORT GPU (CUDA / ROCm) ---
     try:
         if CUDA_DISPONIBIL and torch.cuda.is_available():
             try:
-                gpu_nume = torch.cuda.get_device_name(0)
+                nume_baza_gpu = torch.cuda.get_device_name(0)
+                generatie_gpu = ""
+                
+                is_rocm = hasattr(torch.version, 'hip') and torch.version.hip is not None
+                
+                if is_rocm:
+                    generatie_gpu = "AMD ROCm"
+                else:
+                    capacitate = torch.cuda.get_device_capability(0)
+                    major, minor = capacitate[0], capacitate[1]
+                    
+                    if major == 6:
+                        generatie_gpu = "Pascal"
+                    elif major == 7:
+                        generatie_gpu = "Turing" if minor == 5 else "Volta"
+                    elif major == 8:
+                        generatie_gpu = "Ada Lovelace" if minor == 9 else "Ampere"
+                    elif major == 9:
+                        generatie_gpu = "Hopper/Blackwell"
+                    else:
+                        generatie_gpu = f"Gen {major}.{minor}"
+
+                gpu_nume = f"{nume_baza_gpu} [{generatie_gpu}]"
                 gpu_suportat = True
                 device_code = "cuda"
+                
             except Exception:
-                gpu_nume = sys_gpu_nume if sys_gpu_nume else "GPU CUDA"
+                gpu_nume = sys_gpu_nume if sys_gpu_nume else "GPU Accelerat"
                 gpu_suportat = True
                 device_code = "cuda"
-    except NameError:
+    except Exception:
         pass 
         
     # --- 4. FORMATĂRI FINALE ---
@@ -124,6 +142,7 @@ def detecteaza_hardware_sistem():
         gpu_nume = sys_gpu_nume
 
     return cpu_nume, total_threads, gpu_nume, gpu_suportat, device_code, sys_gpu_nume
+
 
 def colecteaza_date_antrenare(
     base_dir=".",
@@ -181,6 +200,7 @@ class TrainWorker(threading.Thread):
         self,
         model_ales,
         nume_model_salvat_user,
+        marime_model,
         dispozitiv,
         device_code,
         clase_selectate,
@@ -199,6 +219,7 @@ class TrainWorker(threading.Thread):
         super().__init__()
         self.model_ales = model_ales
         self.nume_model_salvat_user = nume_model_salvat_user
+        self.marime_model = marime_model
         self.dispozitiv = dispozitiv
         self.device_code = device_code
         self.clase_selectate = clase_selectate
@@ -216,10 +237,15 @@ class TrainWorker(threading.Thread):
         self.cb_progress = cb_progress
         self.cb_finish = cb_finish
         self._cancel_event = threading.Event()
-
+    
     def anuleaza(self):
         self._cancel_event.set()
 
+
+
+
+
+    
     def run(self):
         if not YOLO_DISPONIBIL:
             print(
@@ -237,7 +263,8 @@ class TrainWorker(threading.Thread):
         os.makedirs(os.path.join(dataset_dir, "labels", "train"), exist_ok=True)
 
         class_mapping = {nume: i for i, nume in enumerate(self.clase_selectate)}
-
+        # Presupunem că variabila 'nume_clasa' conține numele original
+        
         mapa_imagini = os.path.join(self.director_curent, "images")
         mapa_labels = os.path.join(self.director_curent, "labels")
 
@@ -335,16 +362,35 @@ class TrainWorker(threading.Thread):
             with open(yaml_path, "w", encoding="utf-8") as f:
                 yaml.dump(yaml_content, f)
 
-            if self.model_ales == "Model YOLO neantrenat":
-                model = YOLO("yolov8n.pt")
-            else:
-                model_path = os.path.join(
-                    self.director_curent, "models", self.model_ales
-                )
-                model = YOLO(model_path)
+            # Obținem calea către directorul părinte (un pas în urmă)
+            director_parinte = os.path.dirname(self.director_curent)
+            cale_models_dir = os.path.join(director_parinte, "models")
 
-            device_str = self.device_code if "GPU" in self.dispozitiv else "cpu"
-            timp_start = time.time()
+            # Creează folderul 'YOLO models' în directorul părinte dacă nu există
+            os.makedirs(cale_models_dir, exist_ok=True)
+
+            if self.model_ales == "Model YOLO neantrenat":
+                nume_model_baza = f"yolov8{self.marime_model}.pt"
+                cale_model_baza = os.path.join(cale_models_dir, nume_model_baza)
+
+                if os.path.exists(cale_model_baza):
+                    print(f"✅ Model de bază găsit în: {cale_model_baza}")
+                    model = YOLO(cale_model_baza)
+                else:
+                    print(f"⬇️ Modelul de bază {nume_model_baza} nu există. Se descarcă...")
+                    model = YOLO(nume_model_baza)
+
+                    # Dacă biblioteca l-a descărcat local, îl mutăm în folderul din directorul părinte
+                    if os.path.exists(nume_model_baza):
+                        shutil.move(nume_model_baza, cale_model_baza)
+                        print(f"📁 Modelul descărcat a fost salvat în: {cale_model_baza}")
+                    elif os.path.exists(os.path.join(self.director_curent, nume_model_baza)):
+                        shutil.move(os.path.join(self.director_curent, nume_model_baza), cale_model_baza)
+                        print(f"📁 Modelul descărcat a fost salvat în: {cale_model_baza}")
+            else:
+                # Caută modelul antrenat tot în folderul 'YOLO models' din directorul părinte
+                model_path = os.path.join(cale_models_dir, self.model_ales)
+                model = YOLO(model_path)
 
             def on_train_epoch_end(trainer):
                 if self._cancel_event.is_set():
@@ -368,6 +414,9 @@ class TrainWorker(threading.Thread):
             model.add_callback("on_train_epoch_end", on_train_epoch_end)
 
             print("PORNIRE ANTRENARE EFECTIVĂ...")
+            device_str = self.device_code if hasattr(self, "device_code") and self.device_code else "cpu"
+
+            timp_start = time.time()
             model.train(
                 data=yaml_path,
                 epochs=self.epoci,
@@ -393,18 +442,19 @@ class TrainWorker(threading.Thread):
                 if os.path.exists(best_model_path):
                     if self.model_ales == "Model YOLO neantrenat":
                         nume_curat = self.nume_model_salvat_user.strip()
-                        if nume_curat:
-                            if not nume_curat.lower().endswith(".pt"):
-                                nume_curat += ".pt"
-                            nume_model_salvat = nume_curat
-                        else:
-                            nume_model_salvat = f"model_sigma_{int(time.time())}.pt"
+                        
+                        if nume_curat.lower().endswith(".pt"):
+                             nume_curat = nume_curat[:-3]
+                        
+                        sufix = f"_{self.marime_model}"
+                        if not nume_curat.endswith(sufix):
+                            nume_curat += sufix
+                            
+                        nume_model_salvat = nume_curat + ".pt"
                     else:
                         nume_model_salvat = self.model_ales
 
-                    destinatie_finala = os.path.join(
-                        self.director_curent, "models", nume_model_salvat
-                    )
+                    destinatie_finala = os.path.join(director_parinte, "models", nume_model_salvat)
                     shutil.copy(best_model_path, destinatie_finala)
                     print(f"Model salvat cu succes: {destinatie_finala}")
 
@@ -440,9 +490,10 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.MAPA_IMAGINI = os.path.join(self.DIRECTOR_CURENT, "images")
         self.MAPA_ALL = os.path.join(self.MAPA_IMAGINI, "all")
         self.MAPA_LABELS = os.path.join(self.DIRECTOR_CURENT, "labels")
-        self.MAPA_MODELE = os.path.join(self.DIRECTOR_CURENT, "models")
+        self.MAPA_MODELE = os.path.join(os.path.dirname(self.DIRECTOR_CURENT), "models")
         self.var_nume_model_nou = customtkinter.StringVar(value="")
-        self.var_doar_neadnotate = customtkinter.BooleanVar(value=False) # Adăugat pentru filtru
+        self.var_marime_model = customtkinter.StringVar(value="n")
+        self.var_doar_neadnotate = customtkinter.BooleanVar(value=False)
 
         os.makedirs(self.MAPA_ALL, exist_ok=True)
         os.makedirs(self.MAPA_LABELS, exist_ok=True)
@@ -464,7 +515,9 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.mod_stergere_multipla = False
         self.imagini_selectate_stergere = set()
         self.bind("<Return>", self._pe_enter_apasat)
-
+        self.bind("<Unmap>", self._ascunde_modale_la_minimizare)
+        self.bind("<Configure>", self._urmareste_fereastra_principala)
+        self.bind("<Map>", self._arata_modale_la_restaurare)
         self.vars_clase = {}
         self.var_all_clase = customtkinter.BooleanVar(value=True)
         self.var_model_selectat = customtkinter.StringVar(
@@ -507,6 +560,236 @@ class TrainWindow(customtkinter.CTkToplevel):
 
         self.creeaza_pagini()
         self.arata_pagina_principala()
+    def _pe_rotire_scroll_vertical(self, event, scroll_frame):
+        canvas = getattr(scroll_frame, "_parent_canvas", None)
+        if not canvas:
+            return
+        self.update_idletasks()
+        self.update_idletasks() # Esențial pentru a lua noile limite când apar clase noi
+        bbox = canvas.bbox("all")
+        
+        # Dacă nu există conținut deloc, ieșim fără să dăm crash
+        if not bbox:
+            return "break"
+            
+        inaltime_continut = bbox[3] - bbox[1]
+        
+        # Dacă tot conținutul încape, resetăm frumos la 0 și oprim scroll-ul
+        if inaltime_continut <= canvas.winfo_height():
+            canvas.yview_moveto(0.0)
+            return "break"
+
+        top, bottom = canvas.yview()
+
+        cantitate = (
+            -1 * int(event.delta / 120)
+            if event.delta
+            else (1 if event.num == 5 else -1)
+        )
+
+        dimensiune_vizibila = bottom - top
+        max_top = 1.0 - dimensiune_vizibila
+
+        # Prevenim derularea peste limite (sus/jos)
+        if cantitate < 0 and top <= 0.0:
+            canvas.yview_moveto(0.0)
+            return "break"
+
+        if cantitate > 0 and bottom >= 1.0:
+            canvas.yview_moveto(max_top)
+            return "break"
+
+        canvas.yview_scroll(cantitate * 67, "units")
+            
+        return "break"
+    def _ascunde_modale_la_minimizare(self, event):
+        if str(event.widget) == str(self):
+            if hasattr(self, 'modal_overlay') and self.modal_overlay is not None and self.modal_overlay.winfo_exists():
+                self.modal_overlay.withdraw()
+            if hasattr(self, 'modal_cuda') and self.modal_cuda is not None and self.modal_cuda.winfo_exists():
+                self.modal_cuda.withdraw()
+
+    def _urmareste_fereastra_principala(self, event):
+        if str(event.widget) == str(self):
+            x = self.winfo_rootx()
+            y = self.winfo_rooty()
+            w = self.winfo_width()
+            h = self.winfo_height()
+            
+            if hasattr(self, 'modal_overlay') and self.modal_overlay is not None and self.modal_overlay.winfo_exists():
+                self.modal_overlay.geometry(f"{w}x{h}+{x}+{y}")
+                self.modal_overlay.lift()
+                
+            if hasattr(self, 'modal_cuda') and self.modal_cuda is not None and self.modal_cuda.winfo_exists():
+                self.modal_cuda.geometry(f"{w}x{h}+{x}+{y}")
+                self.modal_cuda.lift()
+                
+            if hasattr(self, 'modal_stergere') and self.modal_stergere is not None and self.modal_stergere.winfo_exists():
+                self.modal_stergere.geometry(f"{w}x{h}+{x}+{y}")
+                self.modal_stergere.lift()
+
+    def _arata_modale_la_restaurare(self, event):
+        if str(event.widget) == str(self):
+            if hasattr(self, 'modal_overlay') and self.modal_overlay is not None and self.modal_overlay.winfo_exists():
+                self.modal_overlay.deiconify()
+                self.modal_overlay.lift()
+            if hasattr(self, 'modal_cuda') and self.modal_cuda is not None and self.modal_cuda.winfo_exists():
+                self.modal_cuda.deiconify()
+                self.modal_cuda.lift()
+
+    def rearanjeaza_grila_galerie(self, event=None):
+        latime_element = 220 
+        latime_disponibila = self.galerie_imagini.winfo_width()
+    
+        if latime_disponibila <= 10:
+            return
+        
+        nr_coloane = max(1, latime_disponibila // latime_element)
+    
+        if getattr(self, "nr_coloane_curent", 0) != nr_coloane:
+            self.nr_coloane_curent = nr_coloane
+            widgeturi_afisate = self.galerie_imagini.winfo_children()
+        
+        for index, widget in enumerate(widgeturi_afisate):
+            rand = index // nr_coloane
+            coloana = index % nr_coloane
+            widget.grid(row=rand, column=coloana, padx=10, pady=10, sticky="n")
+
+    def obtine_versiune_cuda_recomandata(self, sys_gpu_nume):
+        nume_mic = sys_gpu_nume.lower()
+        if any(x in nume_mic for x in ["rtx 50"]):
+            return "Blackwell (Seria RTX 5000)", "CUDA 12.4+", "Generație nouă"
+        elif any(x in nume_mic for x in ["rtx 40"]):
+            return "Ada Lovelace (Seria RTX 4000)", "CUDA 12.1 sau 12.4", "Generație curentă"
+        elif any(x in nume_mic for x in ["rtx 30"]):
+            return "Ampere (Seria RTX 3000)", "CUDA 11.8, 12.1, 12.4", "Suportat"
+        elif any(x in nume_mic for x in ["gtx 16", "rtx 20"]):
+            return "Turing (Seria GTX 1600 / RTX 2000)", "CUDA 11.8 sau 12.1", "Suportat"
+        elif any(x in nume_mic for x in ["gtx 10"]):
+            return "Pascal (Seria GTX 1000)", "CUDA 11.8", "Suportat legacy"
+        elif any(x in nume_mic for x in ["gtx 6", "gtx 7", "gtx 9"]):
+            return "Kepler & Maxwell (Seriile 600, 700, 900)", "CUDA 10.2 (sau mai vechi)", "Suportat vechi"
+        return "Generație Necunoscută", "CUDA 11.8", "Versiune de siguranță fallback"
+    def initiaza_instalare_cuda(self):
+        generatie, versiune_cuda, status = self.obtine_versiune_cuda_recomandata(self.sys_gpu_nume)
+        
+        x = self.winfo_rootx()
+        y = self.winfo_rooty()
+        w = self.winfo_width()
+        h = self.winfo_height()
+
+        self.modal_cuda = customtkinter.CTkToplevel(self)
+        self.modal_cuda.overrideredirect(True)
+        self.modal_cuda.geometry(f"{w}x{h}+{x}+{y}")
+        self.modal_cuda.transient(self)
+        self.modal_cuda.grab_set()
+
+        self.modal_cuda.attributes("-alpha", 0.85)
+        self.modal_cuda.configure(fg_color="#0D0D0D")
+
+        card = customtkinter.CTkFrame(
+            self.modal_cuda, corner_radius=16, fg_color="#1E1E1E", border_width=2, border_color="#333333"
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.48, relheight=0.45)
+
+        customtkinter.CTkLabel(card, text="Instalare Drivere CUDA", font=("Roboto", 22, "bold")).pack(pady=(20, 10))
+        
+        info_text = f"S-a detectat: {self.sys_gpu_nume}\nGenerație: {generatie}\nVersiune CUDA necesară: {versiune_cuda}\nStatus: {status}"
+        customtkinter.CTkLabel(card, text=info_text, font=("Roboto", 14), justify="center").pack(pady=10)
+
+        self.cuda_progress = customtkinter.CTkProgressBar(card, width=350, height=20, corner_radius=8)
+        self.cuda_progress.set(0.0)
+        self.cuda_progress.pack(pady=15)
+        
+        self.lbl_cuda_status = customtkinter.CTkLabel(card, text="Se pregătește descărcarea...", font=("Roboto", 14))
+        self.lbl_cuda_status.pack(pady=5)
+
+        self.cancel_cuda_event = threading.Event()
+
+        def anuleaza_instalarea():
+            self.cancel_cuda_event.set()
+            self.modal_cuda.grab_release()
+            self.modal_cuda.destroy()
+
+        btn_cancel = customtkinter.CTkButton(
+            card, text="Cancel", width=110, fg_color="#8B0000", hover_color="#A00000", command=anuleaza_instalarea
+        )
+        btn_cancel.pack(side="bottom", pady=25)
+
+        threading.Thread(target=self._worker_descarcare_cuda, args=(versiune_cuda,), daemon=True).start()
+
+    def _worker_descarcare_cuda(self, versiune_cuda):
+        cuda_urls = {
+            "10.2": "https://developer.download.nvidia.com/compute/cuda/10.2/Prod/network_installers/cuda_10.2.89_win10_network.exe",
+            "11.8": "https://developer.download.nvidia.com/compute/cuda/11.8.0/network_installers/cuda_11.8.0_windows_network.exe",
+            "12.1": "https://developer.download.nvidia.com/compute/cuda/12.1.0/network_installers/cuda_12.1.0_windows_network.exe",
+            "12.4": "https://developer.download.nvidia.com/compute/cuda/12.4.0/network_installers/cuda_12.4.0_windows_network.exe"
+        }
+
+        url_descarcare = cuda_urls.get("11.8")
+        for ver, url in cuda_urls.items():
+            if ver in versiune_cuda:
+                url_descarcare = url
+                break
+
+        nume_fisier = "cuda_network_installer.exe"
+        cale_salvare = os.path.join(os.getcwd(), nume_fisier)
+
+        try:
+            with urllib.request.urlopen(url_descarcare) as raspuns:
+                total_bytes = int(raspuns.headers.get('content-length', 0))
+                bytes_descarcati = 0
+                chunk_size = 16384
+                start_time = time.time()
+
+                with open(cale_salvare, 'wb') as fisier:
+                    while True:
+                        if self.cancel_cuda_event.is_set():
+                            fisier.close()
+                            if os.path.exists(cale_salvare):
+                                os.remove(cale_salvare)
+                            return
+
+                        chunk = raspuns.read(chunk_size)
+                        if not chunk:
+                            break
+
+                        fisier.write(chunk)
+                        bytes_descarcati += len(chunk)
+
+                        if total_bytes > 0:
+                            val_float = bytes_descarcati / total_bytes
+                            procent = int(val_float * 100)
+                            
+                            timp_scurs = time.time() - start_time
+                            viteza = bytes_descarcati / timp_scurs if timp_scurs > 0 else 1
+                            timp_ramas = (total_bytes - bytes_descarcati) / viteza
+
+                            if int(time.time() * 10) % 2 == 0: 
+                                self.after(0, lambda v=val_float, p=procent, t=timp_ramas: self._actualizeaza_ui_cuda(v, p, t))
+
+            if not self.cancel_cuda_event.is_set():
+                self.after(0, lambda: self._finalizeaza_instalare_cuda(cale_salvare))
+
+        except Exception as e:
+            self.after(0, lambda: self.lbl_cuda_status.configure(text=f"Eroare descărcare: Verificați conexiunea."))
+            print(f"Eroare CUDA: {e}")
+
+    def _actualizeaza_ui_cuda(self, val_float, procent, timp_ramas):
+        if hasattr(self, "cuda_progress") and self.modal_cuda.winfo_exists():
+            self.cuda_progress.set(val_float)
+            self.lbl_cuda_status.configure(text=f"Se descarcă... {procent}% (Rămas: ~{int(timp_ramas)}s)")
+
+    def _finalizeaza_instalare_cuda(self, cale_installer):
+        self.lbl_cuda_status.configure(text="Descărcare completă! Lansare installer...")
+        
+        try:
+            subprocess.Popen([cale_installer])
+        except Exception as e:
+            self.lbl_cuda_status.configure(text="Eroare la lansarea aplicației.")
+            print(f"Eroare lansare installer: {e}")
+        
+        self.after(2000, lambda: [self.modal_cuda.grab_release(), self.modal_cuda.destroy()])
 
     def _pe_enter_apasat(self, event=None):
         if self.mod_stergere_multipla:
@@ -547,18 +830,15 @@ class TrainWindow(customtkinter.CTkToplevel):
             widget._canvas.bind("<Button-4>", functie_scroll, add="+")
             widget._canvas.bind("<Button-5>", functie_scroll, add="+")
 
-
     def confirma_stergere_totala(self):
-        # Oprim modul stergere multipla daca este activat
         if self.mod_stergere_multipla:
             self.toggle_stergere_multipla()
 
-        # Cream fereastra mica de dialog (integrata in cea principala)
         dialog = customtkinter.CTkToplevel(self)
         dialog.geometry("400x180")
         dialog.title("Confirmare Ștergere Totală")
-        dialog.transient(self) # O face sa depinda de fereastra "mama"
-        dialog.grab_set()      # Blocheaza fereastra "mama" pana se ia o decizie
+        dialog.transient(self)
+        dialog.grab_set()
 
         lbl_intrebare = customtkinter.CTkLabel(
             dialog, 
@@ -575,6 +855,8 @@ class TrainWindow(customtkinter.CTkToplevel):
         btn_nu = customtkinter.CTkButton(
             frame_butoane,
             text="Nu",
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=dialog.destroy,
             width=120
         )
@@ -594,10 +876,6 @@ class TrainWindow(customtkinter.CTkToplevel):
     def executa_stergere_totala(self):
         self._pe_leave_imagine(None)
         
-        # 1. Ștergem fizic folderele (cu tot cu conținut - poze și adnotări)
-        import shutil
-        import os
-
         try:
             if os.path.exists(self.MAPA_IMAGINI):
                 shutil.rmtree(self.MAPA_IMAGINI, ignore_errors=True)
@@ -606,11 +884,9 @@ class TrainWindow(customtkinter.CTkToplevel):
         except Exception as e:
             print(f"Eroare la ștergerea totală: {e}")
 
-        # 2. Recreem structura de directoare goale
         os.makedirs(self.MAPA_ALL, exist_ok=True)
         os.makedirs(self.MAPA_LABELS, exist_ok=True)
 
-        # 3. Golim cache-ul și resetăm listele de clase interne
         self.thumbnail_cache.clear()
         self.clase_existente.clear()
         
@@ -618,15 +894,13 @@ class TrainWindow(customtkinter.CTkToplevel):
             self.snipper.classes.clear()
             self.snipper.save_classes()
 
-        # 4. Curățăm interfața (tab-urile sus)
         for widget in self.tab_scroll_frame.winfo_children():
             if getattr(widget, "nume_clasa", None) is not None:
                 widget.destroy()
 
         self.clasa_selectata = None
-        self.btn_toate_clasele.configure(fg_color="#1f538d")
+        self.btn_toate_clasele.configure(fg_color="#5865F2")
         
-        # 5. Reîncărcăm vizualizarea (care acum va afișa că nu mai e nicio poză)
         self.incarca_imagini()
 
     def creeaza_pagini(self):
@@ -639,7 +913,7 @@ class TrainWindow(customtkinter.CTkToplevel):
 
         title = customtkinter.CTkLabel(
             master=center_wrapper,
-            text="Sigma",
+            text="Meniu Antrenare",
             font=("Roboto", 40, "bold"),
             text_color="#f2f3f5",
         )
@@ -784,11 +1058,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             font=("Roboto", 18, "bold"),
             fg_color="#5865F2",
             hover_color="#4752C4",
-            command=lambda: (
-                self.master.event_generate("<<CloseTrainWindow>>")
-                if hasattr(self, "master")
-                else self.destroy()
-            ),
+            command=self.deschide_detectie_live
         )
         button3.pack(fill="x", padx=50, pady=(20, 25))
 
@@ -797,7 +1067,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         top_bar = customtkinter.CTkFrame(
             self.second_page, fg_color="transparent", height=40
         )
-        top_bar.pack(fill="x", padx=20, pady=10)
+        top_bar.pack(fill="x", padx=20, pady=(10,0))
 
         buton_adauga_clasa = customtkinter.CTkButton(
             top_bar,
@@ -806,8 +1076,8 @@ class TrainWindow(customtkinter.CTkToplevel):
             height=35,
             corner_radius=8,
             font=("Roboto", 20, "bold"),
-            fg_color="#1f538d",
-            hover_color="#14375e",
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=self.deschide_dialog_clasa,
         )
         buton_adauga_clasa.pack(side="left", padx=(0, 8), pady=(0, 6))
@@ -817,7 +1087,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             orientation="horizontal",
             height=38,
             fg_color="transparent",
-            scrollbar_button_color="#242424",
+            scrollbar_button_color="#2b2d31",
             scrollbar_button_hover_color="gray",
         )
         self.tab_scroll_frame.pack(side="left", fill="x", expand=True)
@@ -835,14 +1105,22 @@ class TrainWindow(customtkinter.CTkToplevel):
             text="All",
             width=100,
             height=32,
-            fg_color="#1f538d",
-            hover_color="#14375e",
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=lambda: self.filtreaza_dupa_clasa(None),
         )
         self.btn_toate_clasele.pack(side="left", padx=4)
         self._bind_scroll_la_widget(
             self.btn_toate_clasele, self._pe_rotire_tabs
         )
+
+        lbl_info_captura = customtkinter.CTkLabel(
+            self.second_page,
+            text=" Pentru captura si adnotare de pe ecran apasati ctrl_shift_s",
+            text_color="lightgray",
+            font=("Roboto", 12)
+        )
+        lbl_info_captura.pack(anchor="w", padx=20, pady=(0, 0))
 
         bottom_bar = customtkinter.CTkFrame(
             self.second_page, fg_color="transparent"
@@ -853,7 +1131,6 @@ class TrainWindow(customtkinter.CTkToplevel):
         bottom_bar.columnconfigure(1, weight=1)
         bottom_bar.columnconfigure(2, weight=1)
 
-        # Creăm un cadru pentru a ține butonul de import și checkbox-ul împreună
         frame_butoane_stanga = customtkinter.CTkFrame(bottom_bar, fg_color="transparent")
         frame_butoane_stanga.grid(row=0, column=0, sticky="w")
 
@@ -861,15 +1138,18 @@ class TrainWindow(customtkinter.CTkToplevel):
             frame_butoane_stanga,
             text="Import Images",
             command=self.deschide_dialog_import,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
         )
         buton_import_imagini.pack(side="left", padx=(0, 15))
 
-        # Checkbox-ul care filtrează imaginile
         self.chk_neadnotate = customtkinter.CTkCheckBox(
             frame_butoane_stanga,
             text="Ascunde imaginile adnotate",
             variable=self.var_doar_neadnotate,
-            command=self.incarca_imagini # Apelăm reîncărcarea când este bifat/debifat
+            fg_color="#5865F2",
+            hover_color="#4752C4",
+            command=self.incarca_imagini
         )
         self.chk_neadnotate.pack(side="left")
 
@@ -882,6 +1162,8 @@ class TrainWindow(customtkinter.CTkToplevel):
             frame_paginare,
             text="< Înapoi",
             width=70,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=self.pagina_anterioara,
         )
         self.btn_prev.pack(side="left", padx=5)
@@ -895,6 +1177,8 @@ class TrainWindow(customtkinter.CTkToplevel):
             frame_paginare,
             text="Înainte >",
             width=70,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=self.pagina_urmatoare,
         )
         self.btn_next.pack(side="left", padx=5)
@@ -907,12 +1191,12 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.btn_stergere_multipla = customtkinter.CTkButton(
             frame_butoane_dreapta,
             text="Ștergere Multiplă",
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=self.toggle_stergere_multipla,
         )
         self.btn_stergere_multipla.pack(side="left", padx=(0, 10))
 
-        # ==================================================
-        # BUTONUL NOU "DELETE ALL" ADAUGAT AICI
         self.btn_delete_all = customtkinter.CTkButton(
             frame_butoane_dreapta,
             text="Delete All",
@@ -922,16 +1206,15 @@ class TrainWindow(customtkinter.CTkToplevel):
             command=self.confirma_stergere_totala,
         )
         self.btn_delete_all.pack(side="left", padx=(0, 10))
-        # ==================================================
 
         buton_inapoi_galerie = customtkinter.CTkButton(
             frame_butoane_dreapta,
             text="Meniu Principal",
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=self.arata_pagina_principala,
         )
         buton_inapoi_galerie.pack(side="left")
-
-
 
         self.galerie_imagini = customtkinter.CTkScrollableFrame(
             self.second_page
@@ -956,7 +1239,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         )
         main_invatare_container.columnconfigure(0, weight=1)
         main_invatare_container.columnconfigure(1, weight=2)
-        main_invatare_container.columnconfigure(2, weight=1)
+        main_invatare_container.columnconfigure(2, weight=0)
         main_invatare_container.rowconfigure(0, weight=1)
 
         frame_stanga_clase = customtkinter.CTkFrame(
@@ -988,30 +1271,106 @@ class TrainWindow(customtkinter.CTkToplevel):
             row=0, column=1, sticky="nsew", padx=10, pady=10
         )
 
-        lbl_titlu_setari = customtkinter.CTkLabel(
-            frame_mijloc_setari, text="Setări Antrenare", font=("Roboto", 16, "bold")
-        )
-        lbl_titlu_setari.pack(pady=(15, 10), padx=15, anchor="w")
+        frame_titlu_setari = customtkinter.CTkFrame(frame_mijloc_setari, fg_color="transparent")
+        frame_titlu_setari.pack(pady=(15, 5), padx=15, fill="x")
 
-        scroll_setari_interior = customtkinter.CTkScrollableFrame(
+        lbl_titlu_setari = customtkinter.CTkLabel(
+            frame_titlu_setari, text="Setări Antrenare", font=("Roboto", 16, "bold")
+        )
+        lbl_titlu_setari.pack(side="left")
+
+        este_amd = False
+        if self.sys_gpu_nume and ("amd" in self.sys_gpu_nume.lower() or "radeon" in self.sys_gpu_nume.lower()):
+            este_amd = True
+
+        self.btn_instaleaza_cuda = customtkinter.CTkButton(
+            frame_titlu_setari,
+            text="install driver",
+            width=80,          
+            height=24,
+            font=("Roboto", 11, "bold"),
+            fg_color="gray" if este_amd else "#2e7d32",
+            hover_color="gray" if este_amd else "#1b5e20",
+            state="disabled" if este_amd else "normal",
+            text_color_disabled="#4d4d4d",
+            command=self.initiaza_instalare_cuda
+        )
+        self.btn_instaleaza_cuda.pack(side="right", padx=(0, 15))
+
+        self.tooltip_window = None
+        self.tooltip_timer = None
+
+        def enter_btn(event):
+            self.tooltip_timer = self.after(1000, arata_tooltip)
+
+        def leave_btn(event):
+            if self.tooltip_timer:
+                self.after_cancel(self.tooltip_timer)
+                self.tooltip_timer = None
+            ascunde_tooltip()
+
+        def arata_tooltip():
+            if self.tooltip_window:
+                return
+            x = self.btn_instaleaza_cuda.winfo_rootx() + 20
+            y = self.btn_instaleaza_cuda.winfo_rooty() + 30
+            
+            self.tooltip_window = customtkinter.CTkToplevel(self)
+            self.tooltip_window.wm_overrideredirect(True)
+            self.tooltip_window.geometry(f"+{x}+{y}")
+            self.tooltip_window.configure(fg_color="#2b2b2b")
+            self.tooltip_window.attributes("-topmost", True)
+            
+            text_info_baza = (
+                "Instalarea driverelor poate produce erori in driverele placi video.\n"
+                "Folositi cu prudenta aceasta metoda.\n"
+                "Daca dupa instalare  pc-ul da reboot, reinstalati driverele prin nvidea app.\n"
+                "Daca sa instalat corect , reporniti programul."
+            )
+            
+            if este_amd:
+                text_info = "Indisponibil, placa AMD\n" + text_info_baza
+            else:
+                text_info = text_info_baza
+            
+            lbl_info = customtkinter.CTkLabel(
+                self.tooltip_window, 
+                text=text_info,
+                font=("Roboto", 12),
+                text_color="#FF6B6B",
+                justify="left",
+                wraplength=350,
+                bg_color="#2b2b2b"
+            )
+            lbl_info.pack(padx=10, pady=10)
+
+        def ascunde_tooltip():
+            if self.tooltip_window:
+                self.tooltip_window.destroy()
+                self.tooltip_window = None
+
+        self.btn_instaleaza_cuda.bind("<Enter>", enter_btn)
+        self.btn_instaleaza_cuda.bind("<Leave>", leave_btn)
+
+        self.scroll_setari_interior = customtkinter.CTkScrollableFrame(
             frame_mijloc_setari, fg_color="transparent"
         )
-        scroll_setari_interior.pack(
+        self.scroll_setari_interior.pack(
             fill="both", expand=True, padx=10, pady=(0, 10)
         )
 
         customtkinter.CTkLabel(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             text="Unitate de procesare detectată:",
             font=("Roboto", 13, "bold"),
         ).pack(anchor="w", pady=(5, 3))
 
-        frame_butoane_hw = customtkinter.CTkFrame(scroll_setari_interior, fg_color="transparent")
+        frame_butoane_hw = customtkinter.CTkFrame(self.scroll_setari_interior, fg_color="transparent")
         frame_butoane_hw.pack(fill="x", pady=(0, 5))
         frame_butoane_hw.columnconfigure(0, weight=1)
         frame_butoane_hw.columnconfigure(1, weight=1)
 
-        self.frame_dinamic_hw = customtkinter.CTkFrame(scroll_setari_interior, fg_color="transparent")
+        self.frame_dinamic_hw = customtkinter.CTkFrame(self.scroll_setari_interior, fg_color="transparent")
         self.frame_dinamic_hw.pack(fill="x", pady=(5, 5))
 
         def afiseaza_parametri_hw(mod):
@@ -1034,6 +1393,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                     placeholder_text_color=culoare_ghost_text,
                 )
                 self.entry_cpu_threads.pack(fill="x", pady=(0, 12))
+                self.entry_cpu_threads.bind("<KeyRelease>", self.actualizeaza_stare_buton_antrenare)
                 self.entry_gpu_batch = None
                 
             elif mod == "gpu":
@@ -1049,11 +1409,12 @@ class TrainWindow(customtkinter.CTkToplevel):
                     placeholder_text_color=culoare_ghost_text,
                 )
                 self.entry_gpu_batch.pack(fill="x", pady=(0, 12))
+                self.entry_gpu_batch.bind("<KeyRelease>", self.actualizeaza_stare_buton_antrenare)
                 self.entry_cpu_threads = None
 
         def set_device_cpu():
             self.var_dispozitiv.set(self.cpu_disponibil_nume)
-            self.btn_cpu.configure(fg_color="#1f538d")
+            self.btn_cpu.configure(fg_color="#5865F2", hover_color="#4752C4")
             if self.gpu_suportat:
                 self.btn_gpu.configure(fg_color="#2b2b2b")
             afiseaza_parametri_hw("cpu")
@@ -1061,7 +1422,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         def set_device_gpu():
             if self.gpu_suportat:
                 self.var_dispozitiv.set(self.gpu_disponibil_nume)
-                self.btn_gpu.configure(fg_color="#1f538d")
+                self.btn_gpu.configure(fg_color="#5865F2", hover_color="#4752C4")
                 self.btn_cpu.configure(fg_color="#2b2b2b")
                 afiseaza_parametri_hw("gpu")
 
@@ -1069,7 +1430,8 @@ class TrainWindow(customtkinter.CTkToplevel):
             frame_butoane_hw,
             text=self.cpu_disponibil_nume,
             command=set_device_cpu,
-            fg_color="#1f538d" if not self.gpu_suportat else "#2b2b2b"
+            fg_color="#5865F2" if not self.gpu_suportat else "#2b2b2b",
+            hover_color="#4752C4"
         )
         self.btn_cpu.grid(row=0, column=0, padx=(0, 5), sticky="ew")
 
@@ -1087,6 +1449,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             text=gpu_text,
             command=set_device_gpu,
             fg_color=gpu_color,
+            hover_color="#4752C4",
             state=gpu_state,
             text_color_disabled="#606060" 
         )
@@ -1103,67 +1466,75 @@ class TrainWindow(customtkinter.CTkToplevel):
         culoare_ghost_text = "#B0B0B0"
 
         customtkinter.CTkLabel(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             text="Parametri Generali",
             font=("Roboto", 14, "bold"),
         ).pack(anchor="w", pady=(5, 8))
 
         customtkinter.CTkLabel(
-            scroll_setari_interior, text="Număr Epoci:", font=("Roboto", 13)
+            self.scroll_setari_interior, text="Număr Epoci:", font=("Roboto", 13)
         ).pack(anchor="w", pady=(2, 2))
         self.entry_epoci = customtkinter.CTkEntry(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             placeholder_text="min: 10 | recomandat: 50 - 100 | max: 1000",
             placeholder_text_color=culoare_ghost_text,
         )
         self.entry_epoci.pack(fill="x", pady=(0, 15))
+        self.entry_epoci.bind("<KeyRelease>", self.actualizeaza_stare_buton_antrenare)
 
         customtkinter.CTkLabel(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             text="Dimensiune Imagine (ImgSz):",
             font=("Roboto", 13),
         ).pack(anchor="w", pady=(2, 2))
         self.entry_imgsz = customtkinter.CTkEntry(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             placeholder_text="min: 320 | recomandat: 640 | max: 1280",
             placeholder_text_color=culoare_ghost_text,
         )
         self.entry_imgsz.pack(fill="x", pady=(0, 12))
+        self.entry_imgsz.bind("<KeyRelease>", self.actualizeaza_stare_buton_antrenare)
 
         customtkinter.CTkLabel(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             text="Rată de Învățare (LR):",
             font=("Roboto", 13),
         ).pack(anchor="w", pady=(2, 2))
         self.entry_lr = customtkinter.CTkEntry(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             placeholder_text="min: 0.0001 | recomandat: 0.01 | max: 0.1",
             placeholder_text_color=culoare_ghost_text,
         )
         self.entry_lr.pack(fill="x", pady=(0, 12))
+        self.entry_lr.bind("<KeyRelease>", self.actualizeaza_stare_buton_antrenare)
 
         customtkinter.CTkLabel(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             text="Thread-uri încărcare date (Workers):",
             font=("Roboto", 13),
         ).pack(anchor="w", pady=(2, 2))
         self.entry_workers = customtkinter.CTkEntry(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             placeholder_text=f"min: 0 | recomandat: 4 | max: {self.total_cpu_threads}",
             placeholder_text_color=culoare_ghost_text,
         )
         self.entry_workers.pack(fill="x", pady=(0, 15))
+        self.entry_workers.bind("<KeyRelease>", self.actualizeaza_stare_buton_antrenare)
 
         customtkinter.CTkCheckBox(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             text="Precizie Mixtă (FP16 / AMP)",
             variable=self.var_fp16,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             font=("Roboto", 13),
         ).pack(anchor="w", pady=(5, 8))
         customtkinter.CTkCheckBox(
-            scroll_setari_interior,
+            self.scroll_setari_interior,
             text="Șterge clasele respective după învățare",
             variable=self.var_sterge_dupa,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             text_color="#FF6B6B",
             font=("Roboto", 13, "bold"),
         ).pack(anchor="w", pady=(2, 10))
@@ -1185,9 +1556,9 @@ class TrainWindow(customtkinter.CTkToplevel):
             hover_color="#A00000",
             text_color="#FFFFFF",
             border_width=2,
-            border_color="#500000",
             corner_radius=6,
             height=50,
+            width=220,
             command=self.porneste_antrenarea,
         )
         self.btn_antrenare.grid(row=0, column=0, sticky="ew", pady=(0, 15))
@@ -1203,10 +1574,10 @@ class TrainWindow(customtkinter.CTkToplevel):
         lbl_titlu_modele.pack(pady=(12, 8))
 
         self.scroll_modele_invatare = customtkinter.CTkScrollableFrame(
-            frame_bottom_modele, fg_color="transparent"
+            frame_bottom_modele, fg_color="transparent",width=300
         )
         self.scroll_modele_invatare.pack(
-            fill="both", expand=True, padx=15, pady=(0, 5)
+            fill="y", expand=True, padx=15, pady=(0, 5)
         )
 
         lbl_nume_model_salvat = customtkinter.CTkLabel(
@@ -1221,7 +1592,18 @@ class TrainWindow(customtkinter.CTkToplevel):
             textvariable=self.var_nume_model_nou,
             placeholder_text="ex: model_detecție_v1",
         )
-        self.entry_nume_model.pack(fill="x", padx=15, pady=(0, 15))
+        self.entry_nume_model.pack( fill ='x', padx=15, pady=(0, 15))
+        self.entry_nume_model.bind("<KeyRelease>", self.actualizeaza_stare_buton_antrenare)
+        self.frame_marime_model = customtkinter.CTkFrame(frame_bottom_modele, fg_color="transparent")
+        self.frame_marime_model.pack(fill="x", padx=15, pady=(0, 15))
+        self.rb_nano = customtkinter.CTkRadioButton(self.frame_marime_model, text="Nano", variable=self.var_marime_model, value="n", fg_color="#5865F2", hover_color="#4752C4")
+        self.rb_nano.pack(side="left", padx=5)
+
+        self.rb_medium = customtkinter.CTkRadioButton(self.frame_marime_model, text="Medium", variable=self.var_marime_model, value="m", fg_color="#5865F2", hover_color="#4752C4")
+        self.rb_medium.pack(side="left", padx=5)
+
+        self.rb_large = customtkinter.CTkRadioButton(self.frame_marime_model, text="Large", variable=self.var_marime_model, value="l", fg_color="#5865F2", hover_color="#4752C4")
+        self.rb_large.pack(side="left", padx=5)
 
         bottom_bar_invatare = customtkinter.CTkFrame(
             self.third_page, fg_color="transparent"
@@ -1231,10 +1613,85 @@ class TrainWindow(customtkinter.CTkToplevel):
         buton_inapoi_invatare = customtkinter.CTkButton(
             master=bottom_bar_invatare,
             text="Înapoi",
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=self.arata_pagina_principala,
         )
         buton_inapoi_invatare.pack(side="right")
+        # BINDING PENTRU SCROLL ÎN MENIUL ÎNVĂȚARE (CLASE, SETĂRI, MODELE)
+        # Folosim lambda pentru a transmite widget-ul specific către funcția generică
+        
+        # 1. Pentru Setări Antrenare
+        self._bind_scroll_la_widget(
+            self.scroll_setari_interior, 
+            lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_setari_interior)
+        )
+        if hasattr(self.scroll_setari_interior, "_parent_canvas"):
+            self._bind_scroll_la_widget(
+                self.scroll_setari_interior._parent_canvas, 
+                lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_setari_interior)
+            )
 
+        # 2. Pentru Modele
+        self._bind_scroll_la_widget(
+            self.scroll_modele_invatare, 
+            lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_modele_invatare)
+        )
+        if hasattr(self.scroll_modele_invatare, "_parent_canvas"):
+            self._bind_scroll_la_widget(
+                self.scroll_modele_invatare._parent_canvas, 
+                lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_modele_invatare)
+            )
+
+        # 3. Pentru Clase (opțional, ca să meargă impecabil peste tot în fereastră)
+        self._bind_scroll_la_widget(
+            self.scroll_clase_invatare, 
+            lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_clase_invatare)
+        )
+        if hasattr(self.scroll_clase_invatare, "_parent_canvas"):
+            self._bind_scroll_la_widget(
+                self.scroll_clase_invatare._parent_canvas, 
+                lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_clase_invatare)
+            )
+                # Pentru Tab-urile claselor (orizontal)
+        if hasattr(self.tab_scroll_frame, "_parent_frame"):
+            self.tab_scroll_frame._parent_frame.bind(
+                "<Configure>", 
+                lambda e: self._actualizeaza_stare_scrollbar(self.tab_scroll_frame, orientare="horizontal"), 
+                add="+"
+            )
+
+        # Pentru Galeria de imagini (vertical)
+        if hasattr(self.galerie_imagini, "_parent_frame"):
+            self.galerie_imagini._parent_frame.bind(
+                "<Configure>", 
+                lambda e: self._actualizeaza_stare_scrollbar(self.galerie_imagini, orientare="vertical"), 
+                add="+"
+            )
+
+        # Pentru meniul din interiorul paginii de Învățare (Setări)
+        if hasattr(self.scroll_setari_interior, "_parent_frame"):
+            self.scroll_setari_interior._parent_frame.bind(
+                "<Configure>", 
+                lambda e: self._actualizeaza_stare_scrollbar(self.scroll_setari_interior, orientare="vertical"), 
+                add="+"
+            )
+
+        # Pentru Modele
+        if hasattr(self.scroll_modele_invatare, "_parent_frame"):
+            self.scroll_modele_invatare._parent_frame.bind(
+                "<Configure>", 
+                lambda e: self._actualizeaza_stare_scrollbar(self.scroll_modele_invatare, orientare="vertical"), 
+                add="+"
+            )
+
+        if hasattr(self.scroll_clase_invatare, "_parent_frame"):
+            self.scroll_clase_invatare._parent_frame.bind(
+                "<Configure>", 
+                lambda e: self._actualizeaza_stare_scrollbar(self.scroll_clase_invatare, orientare="vertical"), 
+                add="+"
+            )
+    
     def toggle_stergere_multipla(self):
         self._pe_leave_imagine(None)
         if not self.mod_stergere_multipla:
@@ -1255,10 +1712,20 @@ class TrainWindow(customtkinter.CTkToplevel):
             self.imagini_selectate_stergere.clear()
             self.btn_stergere_multipla.configure(
                 text="Ștergere Multiplă",
-                fg_color=["#3a7ebf", "#1f538d"],
-                hover_color=["#325882", "#14375e"],
+                fg_color="#5865F2",
+                hover_color="#4752C4",
             )
             self.incarca_imagini()
+
+    def deschide_detectie_live(self):
+        self.withdraw()
+        app_captura = RealtimeCaptureWindow(parent=self.master if hasattr(self, "master") else self)
+        
+        def la_inchidere_live():
+            app_captura.destroy()
+            self.deiconify()
+            
+        app_captura.protocol("WM_DELETE_WINDOW", la_inchidere_live)
 
     def _sterge_imagini_selectate(self):
         for cale in self.imagini_selectate_stergere:
@@ -1316,6 +1783,8 @@ class TrainWindow(customtkinter.CTkToplevel):
             text="Selectează Fișier(e)",
             width=280,
             height=36,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=lambda: [dialog.destroy(), self.importa_fisiere_dialog()],
         )
         btn_fisier.pack(pady=6)
@@ -1325,6 +1794,8 @@ class TrainWindow(customtkinter.CTkToplevel):
             text="Selectează Folder (cu subfoldere)",
             width=280,
             height=36,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=lambda: [dialog.destroy(), self.importa_folder_dialog()],
         )
         btn_folder.pack(pady=6)
@@ -1351,7 +1822,6 @@ class TrainWindow(customtkinter.CTkToplevel):
             dialog, text="Import Imagini de pe Internet", font=("Roboto", 18, "bold")
         ).pack(pady=(20, 10))
 
-
         customtkinter.CTkLabel(
             dialog, text="Denumire clasă / Cuvânt de căutare:", font=("Roboto", 13)
         ).pack(anchor="w", padx=30, pady=(10, 2))
@@ -1367,7 +1837,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         entry_numar.insert(0, "10")
         entry_numar.pack(padx=30, pady=(0, 15))
 
-        lbl_status = customtkinter.CTkLabel(dialog, text="", font=("Roboto", 12), text_color="#3182ce")
+        lbl_status = customtkinter.CTkLabel(dialog, text="", font=("Roboto", 12), text_color="#5865F2")
         lbl_status.pack(pady=5)
 
         def executa_descarcare():
@@ -1383,8 +1853,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                 lbl_status.configure(text="Introduceți un număr valid de imagini!", text_color="#FF6B6B")
                 return
 
-
-            lbl_status.configure(text="Se caută și se descarcă imaginile...", text_color="#3182ce")
+            lbl_status.configure(text="Se caută și se descarcă imaginile...", text_color="#5865F2")
             btn_start.configure(state="disabled")
 
             def proces_async():
@@ -1398,13 +1867,10 @@ class TrainWindow(customtkinter.CTkToplevel):
                     descarcate = 0
                     timestamp = int(time.time())
 
-
                     target_img_dir = Path(self.MAPA_IMAGINI) / clasa_nume
                     target_lbl_dir = Path(self.MAPA_LABELS) / clasa_nume
                     os.makedirs(target_img_dir, exist_ok=True)
                     os.makedirs(target_lbl_dir, exist_ok=True)
-
-                    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
                     headers = {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
@@ -1417,7 +1883,6 @@ class TrainWindow(customtkinter.CTkToplevel):
                             with urllib.request.urlopen(req, timeout=8) as resp:
                                 data = resp.read()
 
-                            # Verificare 1: Dimensiunea fișierului (excludem fișierele mai mici de 2KB)
                             if len(data) < 2048:
                                 print(f"Imaginea {i+1} este prea mică (posibil goală). Trecem peste.")
                                 continue
@@ -1432,7 +1897,6 @@ class TrainWindow(customtkinter.CTkToplevel):
                             with open(img_path, "wb") as f_out:
                                 f_out.write(data)
 
-                            # Verificare 2: Este o imagine validă?
                             try:
                                 with Image.open(img_path) as img_test:
                                     img_test.verify()
@@ -1444,7 +1908,6 @@ class TrainWindow(customtkinter.CTkToplevel):
                             descarcate += 1
 
                         except urllib.error.HTTPError as e:
-                            # Prindem erorile 403, 404 etc. și trecem la următoarea imagine
                             print(f"Eroare HTTP {e.code} la descărcarea imaginii {i+1}. Trecem la următoarea.")
                             continue
                         except urllib.error.URLError as e:
@@ -1455,7 +1918,6 @@ class TrainWindow(customtkinter.CTkToplevel):
 
                     self.after(0, lambda: [
                         dialog.destroy(),
-                        
                         self.incarca_imagini()
                     ])
                 except Exception as e:
@@ -1466,7 +1928,13 @@ class TrainWindow(customtkinter.CTkToplevel):
             threading.Thread(target=proces_async, daemon=True).start()
 
         btn_start = customtkinter.CTkButton(
-            dialog, text="Descarcă și Importă", command=executa_descarcare, width=200, height=36
+            dialog,
+            text="Descarcă și Importă",
+            fg_color="#5865F2",
+            hover_color="#4752C4",
+            command=executa_descarcare,
+            width=200,
+            height=36
         )
         btn_start.pack(pady=10)
 
@@ -1553,11 +2021,28 @@ class TrainWindow(customtkinter.CTkToplevel):
                 target=proceseaza_import_folder, daemon=True
             ).start()
 
-    def _actualizeaza_stare_nume_model(self):
-        if self.var_model_selectat.get() == "Model YOLO neantrenat":
+    def _actualizeaza_stare_nume_model(self, *args):
+        model_selectat = self.var_model_selectat.get()
+        if model_selectat == "Model YOLO neantrenat":
             self.entry_nume_model.configure(state="normal")
+            self.rb_nano.configure(state="normal")
+            self.rb_medium.configure(state="normal")
+            self.rb_large.configure(state="normal")
         else:
             self.entry_nume_model.configure(state="disabled")
+            self.rb_nano.configure(state="disabled")
+            self.rb_medium.configure(state="disabled")
+            self.rb_large.configure(state="disabled")
+
+            nume_fara_ext = os.path.splitext(model_selectat)[0]
+            if nume_fara_ext.endswith("_n"):
+                self.var_marime_model.set("n")
+            elif nume_fara_ext.endswith("_m"):
+                self.var_marime_model.set("m")
+            elif nume_fara_ext.endswith("_l") or nume_fara_ext.endswith("_L"):
+                self.var_marime_model.set("l")
+            else:
+                self.var_marime_model.set("n")
 
     def editeaza_adnotare(self, calea_imagine, nume_clasa):
         self._pe_leave_imagine(None)
@@ -1576,8 +2061,82 @@ class TrainWindow(customtkinter.CTkToplevel):
         except Exception as e:
             print(f"Eroare la deschiderea editorului: {e}")
 
-    def actualizeaza_stare_buton_antrenare(self):
-        if any(var.get() for var in self.vars_clase.values()):
+    def actualizeaza_stare_buton_antrenare(self, *args):
+        clase_ok = any(var.get() for var in self.vars_clase.values())
+
+        culoare_eroare = "#FF4C4C"
+        culoare_text_normal = "#DCE4EE"
+        culoare_border_normal = ["#979DA2", "#565B5E"]
+
+        setari_ok = True
+        try:
+            epoci_str = self.entry_epoci.get().strip()
+            if not epoci_str.isdigit() or not (10 <= int(epoci_str) <= 1000):
+                setari_ok = False
+                self.entry_epoci.configure(text_color=culoare_eroare, border_color=culoare_border_normal)
+            else:
+                self.entry_epoci.configure(text_color=culoare_text_normal, border_color=culoare_border_normal)
+
+            imgsz_str = self.entry_imgsz.get().strip()
+            if not imgsz_str.isdigit() or not (320 <= int(imgsz_str) <= 1280):
+                setari_ok = False
+                self.entry_imgsz.configure(text_color=culoare_eroare, border_color=culoare_border_normal)
+            else:
+                self.entry_imgsz.configure(text_color=culoare_text_normal, border_color=culoare_border_normal)
+
+            lr_str = self.entry_lr.get().strip()
+            try:
+                lr_val = float(lr_str)
+                if not (0.0001 <= lr_val <= 0.1):
+                    setari_ok = False
+                    self.entry_lr.configure(text_color=culoare_eroare, border_color=culoare_border_normal)
+                else:
+                    self.entry_lr.configure(text_color=culoare_text_normal, border_color=culoare_border_normal)
+            except ValueError:
+                setari_ok = False
+                self.entry_lr.configure(text_color=culoare_eroare, border_color=culoare_border_normal)
+
+            workers_str = self.entry_workers.get().strip()
+            if not workers_str.isdigit() or not (0 <= int(workers_str) <= self.total_cpu_threads):
+                setari_ok = False
+                self.entry_workers.configure(text_color=culoare_eroare, border_color=culoare_border_normal)
+            else:
+                self.entry_workers.configure(text_color=culoare_text_normal, border_color=culoare_border_normal)
+
+        except AttributeError:
+            setari_ok = False
+
+        hw_ok = True
+        try:
+            if getattr(self, "entry_cpu_threads", None) is not None:
+                cpu_th_str = self.entry_cpu_threads.get().strip()
+                if not cpu_th_str.isdigit() or not (1 <= int(cpu_th_str) <= self.total_cpu_threads):
+                    hw_ok = False
+                    self.entry_cpu_threads.configure(text_color=culoare_eroare, border_color=culoare_border_normal)
+                else:
+                    self.entry_cpu_threads.configure(text_color=culoare_text_normal, border_color=culoare_border_normal)
+            
+            if getattr(self, "entry_gpu_batch", None) is not None:
+                gpu_batch_str = self.entry_gpu_batch.get().strip()
+                if not gpu_batch_str.isdigit() or not (1 <= int(gpu_batch_str) <= 128):
+                    hw_ok = False
+                    self.entry_gpu_batch.configure(text_color=culoare_eroare, border_color=culoare_border_normal)
+                else:
+                    self.entry_gpu_batch.configure(text_color=culoare_text_normal, border_color=culoare_border_normal)
+        except AttributeError:
+            hw_ok = False
+
+        model_nume_ok = True
+        if self.var_model_selectat.get() == "Model YOLO neantrenat":
+            nume_model = self.var_nume_model_nou.get().strip()
+            
+            if not nume_model or not re.match(r'^[\w\-]+$', nume_model):
+                model_nume_ok = False
+                self.entry_nume_model.configure(text_color=culoare_eroare, border_color=culoare_border_normal)
+            else:
+                self.entry_nume_model.configure(text_color=culoare_text_normal, border_color=culoare_border_normal)
+
+        if clase_ok and setari_ok and hw_ok and model_nume_ok:
             self.btn_antrenare.configure(state="normal", fg_color="#8B0000")
         else:
             self.btn_antrenare.configure(state="disabled", fg_color="gray")
@@ -1586,7 +2145,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         for widget in self.scroll_clase_invatare.winfo_children():
             widget.destroy()
         self.vars_clase.clear()
-
+        f_scroll = lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_clase_invatare)
         chk_all = customtkinter.CTkCheckBox(
             master=self.scroll_clase_invatare,
             text="ALL",
@@ -1596,10 +2155,12 @@ class TrainWindow(customtkinter.CTkToplevel):
             checkbox_height=18,
             border_width=2,
             corner_radius=4,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
             command=self.toggle_select_all_clase,
         )
         chk_all.pack(anchor="w", padx=10, pady=(5, 12))
-
+        self._bind_scroll_la_widget(chk_all, f_scroll)
         self.incarca_clase_existente()
 
         for nume_clasa in self.clase_existente:
@@ -1617,10 +2178,12 @@ class TrainWindow(customtkinter.CTkToplevel):
                 checkbox_height=18,
                 border_width=2,
                 corner_radius=4,
+                fg_color="#5865F2",
+                hover_color="#4752C4",
                 command=self.verifica_stare_all,
             )
             chk.pack(anchor="w", padx=10, pady=6)
-
+            self._bind_scroll_la_widget(chk, f_scroll)
         for widget in self.scroll_modele_invatare.winfo_children():
             widget.destroy()
 
@@ -1641,6 +2204,8 @@ class TrainWindow(customtkinter.CTkToplevel):
                 value=nume_model,
                 variable=self.var_model_selectat,
                 font=("Roboto", 14),
+                fg_color="#5865F2",
+                hover_color="#4752C4",
                 command=self._actualizeaza_stare_nume_model,
             )
             radio_model.pack(anchor="w", padx=10, pady=8)
@@ -1661,58 +2226,23 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.var_all_clase.set(toate_bifate)
         self.actualizeaza_stare_buton_antrenare()
 
-    def arata_avertisment_campuri_goale(self, mesaj="Completați toate câmpurile înainte de a porni antrenarea!"):
-        aviz = customtkinter.CTkToplevel(self)
-        aviz.geometry("420x160")
-        aviz.title("Atenție")
-        aviz.transient(self)
-        aviz.grab_set()
-
-        customtkinter.CTkLabel(
-            aviz,
-            text=mesaj,
-            font=("Roboto", 14),
-            wraplength=380,
-        ).pack(pady=(25, 15))
-
-        btn = customtkinter.CTkButton(
-            aviz, text="Am înțeles", width=120, command=aviz.destroy
-        )
-        btn.pack(pady=10)
-
-        aviz.bind("<Return>", lambda event: aviz.destroy())
-
     def porneste_antrenarea(self):
         clase_selectate = [c for c, var in self.vars_clase.items() if var.get()]
         model_ales = self.var_model_selectat.get()
-
-        if not clase_selectate:
-            self.arata_avertisment_campuri_goale("Nu ai selectat nicio clasă pentru antrenare!")
-            return
 
         cpu_th = "4"
         batch_size = "16"
         
         if getattr(self, "entry_cpu_threads", None) is not None:
             cpu_th = self.entry_cpu_threads.get().strip()
-            if not cpu_th:
-                self.arata_avertisment_campuri_goale("Completați numărul de CPU Threads dorit!")
-                return
                 
         if getattr(self, "entry_gpu_batch", None) is not None:
             batch_size = self.entry_gpu_batch.get().strip()
-            if not batch_size:
-                self.arata_avertisment_campuri_goale("Completați Dimensiunea Batch-ului (Batch Size) pentru GPU!")
-                return
 
         epoci = self.entry_epoci.get().strip()
         imgsz = self.entry_imgsz.get().strip()
         lr = self.entry_lr.get().strip()
         workers = self.entry_workers.get().strip()
-
-        if not epoci or not imgsz or not lr or not workers:
-            self.arata_avertisment_campuri_goale("Toate câmpurile de setări generale trebuie completate înainte de antrenare!")
-            return
 
         try:
             int(cpu_th)
@@ -1722,7 +2252,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             float(lr)
             int(workers)
         except ValueError:
-            self.arata_avertisment_campuri_goale("Introduceți valori numerice valide în câmpurile de setări!")
+            print("Eroare de formatare la cifre!")
             return
 
         def cb_progress(valoare_float, procentaj, timp_ramas):
@@ -1740,6 +2270,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         worker = TrainWorker(
             model_ales=model_ales,
             nume_model_salvat_user=self.var_nume_model_nou.get(),
+            marime_model=self.var_marime_model.get(),
             dispozitiv=self.var_dispozitiv.get(),
             device_code=self.gpu_device_code,
             clase_selectate=clase_selectate,
@@ -1772,6 +2303,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.modal_overlay.geometry(f"{w}x{h}+{x}+{y}")
 
         self.modal_overlay.attributes("-alpha", 0.85)
+    
         self.modal_overlay.configure(fg_color="#0D0D0D")
         self.modal_overlay.transient(self)
         self.modal_overlay.grab_set()
@@ -1815,6 +2347,12 @@ class TrainWindow(customtkinter.CTkToplevel):
         )
         self.lbl_timp_ramas.pack(side="left")
 
+        def la_apasare_opreste():
+            worker.anuleaza()
+            btn_cancel.configure(state="disabled", text="Se oprește...")
+            self.lbl_timp_ramas.configure(text="Învățarea se oprește, așteptați...")
+            self.progressbar.configure(progress_color="#FF8C00")
+            
         btn_cancel = customtkinter.CTkButton(
             frame_bottom,
             text="Oprește",
@@ -1823,7 +2361,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             fg_color="#8B0000",
             hover_color="#A00000",
             font=("Roboto", 15, "bold"),
-            command=lambda: worker.anuleaza(),
+            command=la_apasare_opreste
         )
         btn_cancel.pack(side="right")
 
@@ -1836,15 +2374,19 @@ class TrainWindow(customtkinter.CTkToplevel):
             self.lbl_timp_ramas.configure(text=timp_ramas)
 
     def _inchide_modal_antrenare(self, anulat):
-        if hasattr(self, "modal_overlay") and self.modal_overlay.winfo_exists():
-            self.modal_overlay.grab_release()
-            self.modal_overlay.destroy()
-
-        if anulat:
-            print("❌ Antrenarea a fost anulată (sau eșuată).")
-        else:
-            print("✅ Antrenarea YOLO a fost finalizată cu succes!")
-        self.actualizeaza_interfata_invatare()
+        if hasattr(self, "modal_overlay") and self.modal_overlay is not None:
+            try:
+                if self.modal_overlay.winfo_exists():
+                    self.modal_overlay.grab_release()
+                    self.modal_overlay.destroy()
+                    
+                    self.update_idletasks()
+                    self.after(50, self.focus_force)
+            except Exception:
+                pass
+            
+            self.modal_overlay = None  
+            self.actualizeaza_interfata_invatare()
 
     def incarca_clase_existente(self):
         if os.path.exists(self.MAPA_IMAGINI):
@@ -1858,39 +2400,116 @@ class TrainWindow(customtkinter.CTkToplevel):
         canvas = getattr(self.tab_scroll_frame, "_parent_canvas", None)
         if not canvas:
             return
+        self.update_idletasks()
+        # VERIFICARE NOUĂ: Axa X
+        bbox = canvas.bbox("all")
+        if not bbox or (bbox[2] - bbox[0]) <= canvas.winfo_width():
+            canvas.xview_moveto(0.0)
+            return "break"
+            
         left, right = canvas.xview()
-        if left <= 0.0 and right >= 1.0:
-            return
 
         cantitate = (
             -1 * int(event.delta / 120)
             if event.delta
             else (1 if event.num == 5 else -1)
         )
+        
+        dimensiune_vizibila = right - left
+        max_left = 1.0 - dimensiune_vizibila
+        
         if cantitate < 0 and left <= 0.0:
-            return
+            canvas.xview_moveto(0.0)
+            return "break"
+            
         if cantitate > 0 and right >= 1.0:
-            return
-        canvas.xview_scroll(cantitate * 20, "units")
+            canvas.xview_moveto(max_left)
+            return "break"
+            
+        canvas.xview_scroll(cantitate * 67, "units")
+        
+        nou_left, nou_right = canvas.xview()
+        if nou_left <= 0.0:
+            canvas.xview_moveto(0.0)
+        elif nou_right >= 1.0:
+            canvas.xview_moveto(1.0 - (nou_right - nou_left))
+            
+        return "break"
 
+    def _actualizeaza_stare_scrollbar(self, scroll_frame, orientare="vertical"):
+        canvas = getattr(scroll_frame, "_parent_canvas", None)
+        scrollbar = getattr(scroll_frame, "_scrollbar", None)
+        
+        if not canvas or not scrollbar:
+            return
+
+        # Asigură-te că UI-ul este actualizat înainte de a citi dimensiunile
+        self.update_idletasks()
+        
+        bbox = canvas.bbox("all")
+        if not bbox:
+            return
+
+        # Forțăm afișarea scrollbar-ului indiferent de dimensiunea conținutului
+        scrollbar.grid()
+
+        # Setăm regiunea de scroll pentru a face bara inactivă dacă nu e nevoie de ea
+        if orientare == "vertical":
+            inaltime_continut = bbox[3] - bbox[1]
+            if inaltime_continut <= canvas.winfo_height():
+                # Conținutul încape -> inactivăm scrollul
+                canvas.configure(scrollregion=(0, 0, canvas.winfo_width(), canvas.winfo_height()))
+            else:
+                # Conținutul depășește -> activăm scrollul
+                canvas.configure(scrollregion=bbox)
+        elif orientare == "horizontal":
+            latime_continut = bbox[2] - bbox[0]
+            if latime_continut <= canvas.winfo_width():
+                # Conținutul încape -> inactivăm scrollul
+                canvas.configure(scrollregion=(0, 0, canvas.winfo_width(), canvas.winfo_height()))
+            else:
+                # Conținutul depășește -> activăm scrollul
+                canvas.configure(scrollregion=bbox)
     def _pe_rotire_galerie(self, event):
         canvas = getattr(self.galerie_imagini, "_parent_canvas", None)
         if not canvas:
             return
+        self.update_idletasks()
+            
+        # VERIFICARE NOUĂ
+        bbox = canvas.bbox("all")
+        if not bbox or (bbox[3] - bbox[1]) <= canvas.winfo_height():
+            canvas.yview_moveto(0.0)
+            return "break"
+
         top, bottom = canvas.yview()
-        if top <= 0.0 and bottom >= 1.0:
-            return
 
         cantitate = (
             -1 * int(event.delta / 120)
             if event.delta
             else (1 if event.num == 5 else -1)
         )
+        
+        dimensiune_vizibila = bottom - top
+        max_top = 1.0 - dimensiune_vizibila
+        
         if cantitate < 0 and top <= 0.0:
-            return
+            canvas.yview_moveto(0.0)
+            return "break"
+            
         if cantitate > 0 and bottom >= 1.0:
-            return
-        canvas.yview_scroll(cantitate * 32, "units")
+            canvas.yview_moveto(max_top)
+            return "break"
+            
+        canvas.yview_scroll(cantitate * 67, "units")
+        
+        nou_top, nou_bottom = canvas.yview()
+        if nou_top <= 0.0:
+            canvas.yview_moveto(0.0)
+        elif nou_bottom >= 1.0:
+            canvas.yview_moveto(1.0 - (nou_bottom - nou_top))
+            
+        return "break"
 
     def arata_pagina_galerie(self):
         self.main_page.pack_forget()
@@ -1927,7 +2546,12 @@ class TrainWindow(customtkinter.CTkToplevel):
         ).pack(pady=(25, 15))
 
         btn = customtkinter.CTkButton(
-            aviz, text="Am înțeles", width=120, command=aviz.destroy
+            aviz,
+            text="Am înțeles",
+            width=120,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
+            command=aviz.destroy
         )
         btn.pack(pady=10)
 
@@ -1961,6 +2585,8 @@ class TrainWindow(customtkinter.CTkToplevel):
                 ]:
                     self.arata_avertisment_duplicat(nume)
                 else:
+                    os.makedirs(os.path.join(self.MAPA_IMAGINI, nume), exist_ok=True)
+                    os.makedirs(os.path.join(self.MAPA_LABELS, nume), exist_ok=True)
                     self.clase_existente.append(nume)
                     self.creeaza_fila_clasa(nume)
                     dialog.destroy()
@@ -1980,14 +2606,19 @@ class TrainWindow(customtkinter.CTkToplevel):
         ).pack(side="right", padx=(10, 0))
 
         customtkinter.CTkButton(
-            frame_butoane, text="Ok", width=100, command=pe_ok
+            frame_butoane,
+            text="Ok",
+            width=100,
+            fg_color="#5865F2",
+            hover_color="#4752C4",
+            command=pe_ok
         ).pack(side="right")
 
     def filtreaza_dupa_clasa(self, nume_clasa):
         self._pe_leave_imagine(None)
         self.clasa_selectata = nume_clasa
         if nume_clasa is None:
-            self.btn_toate_clasele.configure(fg_color="#1f538d")
+            self.btn_toate_clasele.configure(fg_color="#5865F2")
         else:
             self.btn_toate_clasele.configure(fg_color="#2b2b2b")
 
@@ -1995,7 +2626,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             if hasattr(widget, "nume_clasa"):
                 widget.configure(
                     fg_color=(
-                        "#1f538d"
+                        "#5865F2"
                         if widget.nume_clasa == nume_clasa
                         else "#2b2b2b"
                     )
@@ -2006,7 +2637,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             ):
                 widget.configure(
                     fg_color=(
-                        "#1f538d"
+                        "#5865F2"
                         if widget.cget("text") == nume_clasa
                         else "#2b2b2b"
                     )
@@ -2016,8 +2647,8 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.imagini_selectate_stergere.clear()
         self.btn_stergere_multipla.configure(
             text="Ștergere Multiplă",
-            fg_color=["#3a7ebf", "#1f538d"],
-            hover_color=["#325882", "#14375e"],
+            fg_color="#5865F2",
+            hover_color="#4752C4",
         )
         self.incarca_imagini()
 
@@ -2089,6 +2720,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         def pe_leave_x(event=None):
             pe_leave_tab()
             lbl_x.configure(text_color="#aaaaaa")
+            
 
         for element in (tab_frame, lbl_nume):
             element.bind("<Enter>", pe_enter_tab)
@@ -2862,15 +3494,15 @@ class TrainWindow(customtkinter.CTkToplevel):
                             if deseneaza_triunghi:
                                 d_n = ImageDraw.Draw(pil_n)
                                 d_n.polygon(
-                                    [(99, 0), (79, 0), (99, 20)], fill="#1f538d"
+                                    [(99, 0), (79, 0), (99, 20)], fill="#5865F2"
                                 )
                                 d_hx = ImageDraw.Draw(pil_hx)
                                 d_hx.polygon(
-                                    [(99, 0), (79, 0), (99, 20)], fill="#1f538d"
+                                    [(99, 0), (79, 0), (99, 20)], fill="#5865F2"
                                 )
                                 d_ht = ImageDraw.Draw(pil_ht)
                                 d_ht.polygon(
-                                    [(99, 0), (79, 0), (99, 20)], fill="#3182ce"
+                                    [(99, 0), (79, 0), (99, 20)], fill="#4752C4",
                                 )
 
                             def draw_x(im, c_x):
@@ -2883,7 +3515,6 @@ class TrainWindow(customtkinter.CTkToplevel):
                                 )
                                 dr.line([(5, 5), (13, 13)], fill=c_x, width=1)
                                 dr.line([(5, 13), (13, 5)], fill=c_x, width=1)
-
                             draw_x(pil_n, "#888888")
                             draw_x(pil_hx, "#e0e0e0")
                             draw_x(pil_ht, "#888888")

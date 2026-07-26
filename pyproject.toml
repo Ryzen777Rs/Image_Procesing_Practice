@@ -1,0 +1,20 @@
+[project]
+name="Image_Procesing_Program"
+version ="0.1.0"
+description="Object detection and Yolo training"
+readme="README.md"
+requires-python ="==3.12.0"
+dependencies = [
+    "customtkinter>=6.0.0",
+    "keyboard>=0.13.5",
+    "mss>=10.2.0",
+    "numpy>=2.5.1",
+    "opencv-contrib-python>=5.0.0.93",
+    "pillow>=12.3.0",
+    "ultralytics>=8.4.106",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.21.0",
+]
