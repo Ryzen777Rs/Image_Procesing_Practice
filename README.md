@@ -7,7 +7,7 @@
 <br />
 <div align="center">
   <!-- Înlocuiți calea de mai jos cu logo-ul real al proiectului vostru -->
-    <img src="logos/soldierboy.jpeg" alt="Logo" width="80" height="80">
+    <img src="app/logos/soldierboy.jpeg" alt="Logo" width="80" height="80">
   </a>
 
   <h3 align="center">Detectarea Obiectelor și Antrenarea Modelelor (Sigma)</h3>
