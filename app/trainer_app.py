@@ -1280,8 +1280,15 @@ class TrainWindow(customtkinter.CTkToplevel):
         lbl_titlu_setari.pack(side="left")
 
         este_amd = False
-        if self.sys_gpu_nume and ("amd" in self.sys_gpu_nume.lower() or "radeon" in self.sys_gpu_nume.lower()):
-            este_amd = True
+        if self.sys_gpu_nume:
+            nume_mic = self.sys_gpu_nume.lower()
+            are_amd = "amd" in nume_mic or "radeon" in nume_mic
+            are_nvidia = "nvidia" in nume_mic or "rtx" in nume_mic or "gtx" in nume_mic
+            
+            # Sistemul este considerat AMD (fără suport CUDA) DOAR dacă
+            # are grafică AMD, dar nu are o placă NVIDIA dedicată pe lângă ea.
+            if are_amd and not are_nvidia:
+                este_amd = True
 
         self.btn_instaleaza_cuda = customtkinter.CTkButton(
             frame_titlu_setari,
