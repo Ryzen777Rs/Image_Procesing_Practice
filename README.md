@@ -2,32 +2,15 @@
 
 <!-- PROJECT SHIELDS -->
 <!-- Aceste insigne necesită link-ul de la repository-ul vostru pentru a funcționa corect -->
-[![Contributors][contributors-shield]][contributors-url]
-[![Forks][forks-shield]][forks-url]
-[![Stargazers][stars-shield]][stars-url]
-[![Issues][issues-shield]][issues-url]
+[![Contributors][contributors-shield]][(https://github.com/Ryzen777Rs)]
 
 <br />
 <div align="center">
   <!-- Înlocuiți calea de mai jos cu logo-ul real al proiectului vostru -->
-  <a href="https://github.com/nume-utilizator/nume-repo">
-    <img src="logos/logo.png" alt="Logo" width="80" height="80">
+    <img src="logos/soldierboy.jpeg" alt="Logo" width="80" height="80">
   </a>
 
   <h3 align="center">Detectarea Obiectelor și Antrenarea Modelelor (Sigma)</h3>
-
-  <p align="center">
-    O soluție software integrată pentru recunoașterea vizuală a obiectelor și antrenarea personalizată a modelelor AI.
-    <br />
-    <a href="https://github.com/nume-utilizator/nume-repo"><strong>Explorează documentația »</strong></a>
-    <br />
-    <br />
-    <a href="https://github.com/nume-utilizator/nume-repo">Vezi Demo</a>
-    ·
-    <a href="https://github.com/nume-utilizator/nume-repo/issues">Raportează un Bug</a>
-    ·
-    <a href="https://github.com/nume-utilizator/nume-repo/issues">Propune o Funcționalitate</a>
-  </p>
 </div>
 
 <!-- TABLE OF CONTENTS -->
