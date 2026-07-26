@@ -355,7 +355,7 @@ class MainApp(customtkinter.CTk):
             self.btn_start.configure(state="normal", text="Start Detecție Ecran")
 
     def _screen_capture_worker(self):
-        with mss.mss() as sct:
+        with mss.MSS() as sct:
             monitor = sct.monitors[1]
             while self.is_running:
                 try:

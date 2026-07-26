@@ -1,7 +1,7 @@
 task: detect
 mode: train
-model: c:\Users\Ryzen\Image_Procesing_Practice\models\yolov8n.pt
-data: c:\Users\Ryzen\Image_Procesing_Practice\app\yolo_dataset_temp\data.yaml
+model: C:\Users\Ryzen\Image_Procesing_Practice\models\yolov8n.pt
+data: C:\Users\Ryzen\Image_Procesing_Practice\app\yolo_dataset_temp\data.yaml
 epochs: 10
 time: null
 patience: 100
@@ -11,8 +11,8 @@ save: true
 save_period: -1
 cache: false
 device: cpu
-workers: 12
-project: c:\Users\Ryzen\Image_Procesing_Practice\app\runs
+workers: 8
+project: C:\Users\Ryzen\Image_Procesing_Practice\app\runs
 name: train_session
 exist_ok: true
 pretrained: true

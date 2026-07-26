@@ -10,6 +10,7 @@ dependencies = [
     "mss>=10.2.0",
     "numpy>=2.5.1",
     "opencv-contrib-python>=5.0.0.93",
+    "pi-heif>=1.4.0",
     "pillow>=12.3.0",
     "ultralytics>=8.4.106",
 ]
