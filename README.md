@@ -2,12 +2,12 @@
 
 <!-- PROJECT SHIELDS -->
 <!-- Aceste insigne necesită link-ul de la repository-ul vostru pentru a funcționa corect -->
-[![Contributors][contributors-shield]][(https://github.com/Ryzen777Rs)]
+[![Contributors][contributors-shield]][contributors-url]
 
 <br />
 <div align="center">
   <!-- Înlocuiți calea de mai jos cu logo-ul real al proiectului vostru -->
-    <img src="app/logos/soldierboy.jpeg" alt="Logo" width="80" height="80">
+    <img src="app/logos/soldierboy.jpeg" alt="Logo" width="400" height="400">
   </a>
 
   <h3 align="center">Detectarea Obiectelor și Antrenarea Modelelor (Sigma)</h3>
@@ -96,11 +96,12 @@ Acest proiect a fost realizat cu efortul comun al următoarei echipe:
 | **👑 Lider de Proiect** | Gudîma Liviu |
 | **👨‍💻 Bucătar (Dezvoltator)** | Șilo Alexandr |
 | **🤖 Asistent AI (Ajutor nr. 1)** | Gemini |
+| **🎨 Master HTML a.k.a Designer** | Dancu Nicolae |
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- Acestea sunt variabilele folosite pentru insigne. Înlocuiți "nume-utilizator/nume-repo" cu datele voastre reale de GitHub. -->
 [contributors-shield]: https://img.shields.io/github/contributors/nume-utilizator/nume-repo.svg?style=for-the-badge
-[contributors-url]: https://github.com/nume-utilizator/nume-repo/graphs/contributors
+[contributors-url]: https://github.com/Ryzen777Rs
 [forks-shield]: https://img.shields.io/github/forks/nume-utilizator/nume-repo.svg?style=for-the-badge
 [forks-url]: https://github.com/nume-utilizator/nume-repo/network/members
 [stars-shield]: https://img.shields.io/github/stars/nume-utilizator/nume-repo.svg?style=for-the-badge
