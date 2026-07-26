@@ -100,7 +100,7 @@ Acest proiect a fost realizat cu efortul comun al următoarei echipe:
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- Acestea sunt variabilele folosite pentru insigne. Înlocuiți "nume-utilizator/nume-repo" cu datele voastre reale de GitHub. -->
-[contributors-shield]: https://avatars.githubusercontent.com/u/133797338?v=4
+[contributors-shield]: https://img.shields.io/github/contributors/Ryzen777Rs/Ryzen777Rs.svg?style=for-the-badge
 [contributors-url]: https://github.com/Ryzen777Rs
 [forks-shield]: https://img.shields.io/github/forks/nume-utilizator/nume-repo.svg?style=for-the-badge
 [forks-url]: https://github.com/nume-utilizator/nume-repo/network/members
