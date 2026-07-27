@@ -658,7 +658,7 @@ class TrainWindow(customtkinter.CTkToplevel):
     def obtine_versiune_cuda_recomandata(self, sys_gpu_nume):
         nume_mic = sys_gpu_nume.lower()
         if any(x in nume_mic for x in ["rtx 50"]):
-            return "Blackwell (Seria RTX 5000)", "CUDA 12.4+", "Generație nouă"
+            return "Blackwell (Seria RTX 5000)", "CUDA 12.8+", "Generație nouă"
         elif any(x in nume_mic for x in ["rtx 40"]):
             return "Ada Lovelace (Seria RTX 4000)", "CUDA 12.1 sau 12.4", "Generație curentă"
         elif any(x in nume_mic for x in ["rtx 30"]):
@@ -723,7 +723,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             "10.2": "https://developer.download.nvidia.com/compute/cuda/10.2/Prod/network_installers/cuda_10.2.89_win10_network.exe",
             "11.8": "https://developer.download.nvidia.com/compute/cuda/11.8.0/network_installers/cuda_11.8.0_windows_network.exe",
             "12.1": "https://developer.download.nvidia.com/compute/cuda/12.1.0/network_installers/cuda_12.1.0_windows_network.exe",
-            "12.4": "https://developer.download.nvidia.com/compute/cuda/12.4.0/network_installers/cuda_12.4.0_windows_network.exe"
+            "12.8": "https://developer.download.nvidia.com/compute/cuda/12.8.0/network_installers/cuda_12.8.0_windows_network.exe"
         }
 
         url_descarcare = cuda_urls.get("11.8")
