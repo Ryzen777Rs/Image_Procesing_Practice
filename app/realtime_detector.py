@@ -38,6 +38,7 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.class_name = ""
         self.cap = None
         self.is_running = False
+        self._is_closing = False  # FLAG NOU pentru a preveni crash-ul la inchidere
         self.current_class_count = 0  
         
         # Stări desenare
@@ -89,7 +90,7 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         elif hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'TrackerKCF_create'):
             return cv2.legacy.TrackerKCF_create()
         
-        # 2. Încearcă CSRT (frecvent disponibil și mai precis decat KCF)
+        # 2. Încearcă CSRT
         if hasattr(cv2, 'TrackerCSRT_create'):
             return cv2.TrackerCSRT_create()
         elif hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'TrackerCSRT_create'):
@@ -101,7 +102,7 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         elif hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'TrackerMIL_create'):
             return cv2.legacy.TrackerMIL_create()
 
-        print("Avertisment: Niciun tracker compatibil nu este disponibil. Instalați opencv-contrib-python")
+        print("Avertisment: Niciun tracker compatibil nu este disponibil.")
         return None
 
     def load_classes(self):
@@ -129,7 +130,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.bind("<Return>", lambda e: self.handle_action_button())
         self.bind("<Escape>", lambda e: self.anuleaza_pauza())
 
-        # Meniul plutitor
         self.overlay_w = 680
         self.overlay_panel = customtkinter.CTkFrame(
             self.video_lbl, corner_radius=0, fg_color="#1e1e24", border_width=2, border_color="#3a3a45",
@@ -172,13 +172,8 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.entry_num_stages.pack(side="left", padx=(0, 15))
 
         self.btn_confirm = customtkinter.CTkButton(
-            self.frame_input, 
-            text="Confirmă", 
-            command=self.confirma_clasa, 
-            font=("Roboto", 13, "bold"), 
-            width=90,
-            fg_color="#5865F2", 
-            hover_color="#4752C4"
+            self.frame_input, text="Confirmă", command=self.confirma_clasa, 
+            font=("Roboto", 13, "bold"), width=90, fg_color="#5865F2", hover_color="#4752C4"
         )
         self.btn_confirm.pack(side="right", padx=(0, 0))
 
@@ -224,17 +219,13 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
     def _start_drag(self, event):
         self._drag_start_x = event.x_root
         self._drag_start_y = event.y_root
-        
         self._start_panel_x = self.overlay_panel.winfo_x()
         self._start_panel_y = self.overlay_panel.winfo_y()
 
     def _on_drag(self, event):
         delta_x = event.x_root - self._drag_start_x
         delta_y = event.y_root - self._drag_start_y
-        
-        new_x = self._start_panel_x + delta_x
-        new_y = self._start_panel_y + delta_y
-        self.overlay_panel.place(x=new_x, y=new_y)
+        self.overlay_panel.place(x=self._start_panel_x + delta_x, y=self._start_panel_y + delta_y)
 
     def confirma_clasa(self):
         selectata = self.combo_class.get().strip()
@@ -291,16 +282,26 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         threading.Thread(target=self._init_camera_bg, daemon=True).start()
 
     def _init_camera_bg(self):
-        # Încearcă varianta standard prima dată
-        cap = cv2.VideoCapture(0)
-        
-        # Dacă pe Windows nu merge standardul, folosește DSHOW
-        if not cap.isOpened() and platform.system() == "Windows":
+        # Folosim DSHOW pe Windows din prima pentru a evita eroarea MSMF cap_msmf.cpp
+        if platform.system() == "Windows":
             cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(0)
             
-        self.after(0, self._camera_ready, cap)
+        if not self._is_closing:
+            self.after(0, self._camera_ready, cap)
+        else:
+            # Dacă utilizatorul a închis deja fereastra
+            if cap is not None:
+                cap.release()
 
     def _camera_ready(self, cap):
+        # Dacă fereastra a fost închisă între timp
+        if self._is_closing:
+            if cap is not None:
+                cap.release()
+            return
+
         self.cap = cap
         self.is_running = True
         self.lbl_instructions.configure(text="Alegeți sau scrieți o clasă nouă în listă, apoi Confirmă.", text_color="#e0e0e0")
@@ -330,7 +331,8 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.btn_restart_phase.pack_forget()
 
     def update_webcam(self):
-        if not self.is_running or self.cap is None:
+        # Oprim procesarea dacă se închide fereastra
+        if self._is_closing or not self.is_running or self.cap is None:
             return
 
         if self.paused and self.current_frame is not None:
@@ -361,7 +363,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
             frame = cv2.addWeighted(frame, 0.3, np.zeros_like(frame), 0.7, 0)
 
             elapsed = time.time() - self.turn_guide_start_time
-            
             cv2.putText(frame, "MODIFICATI POZITIA OBIECTULUI", (50, int(self.win_h / 2)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3, cv2.LINE_AA)
 
@@ -425,7 +426,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
     def deseneaza_poligon_pe_cadru(self, frame):
         n = len(self.points)
         culoare_violet = (242, 101, 88) 
-        
         if n > 1:
             for i in range(n - 1):
                 p1, p2 = self.points[i], self.points[i + 1]
@@ -442,25 +442,15 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         pil_img = Image.fromarray(rgb_img)
         ctk_img = customtkinter.CTkImage(light_image=pil_img, dark_image=pil_img, size=(self.win_w, self.win_h))
         self.video_lbl.configure(image=ctk_img)
-        # FOARTE IMPORTANT: Păstrează referința pentru a evita garbage collection (Ecran negru)
         self.video_lbl.image = ctk_img 
 
     def _get_mapped_coords(self, event):
         lbl_w = self.video_lbl.winfo_width()
         lbl_h = self.video_lbl.winfo_height()
+        if lbl_w <= 0 or lbl_h <= 0: return event.x, event.y
+        scale_x, scale_y = self.win_w / float(lbl_w), self.win_h / float(lbl_h)
+        return int(event.x * scale_x), int(event.y * scale_y)
 
-        if lbl_w <= 0 or lbl_h <= 0:
-            return event.x, event.y
-
-        scale_x = self.win_w / float(lbl_w)
-        scale_y = self.win_h / float(lbl_h)
-
-        real_x = int(event.x * scale_x)
-        real_y = int(event.y * scale_y)
-        
-        return real_x, real_y
-
-    # METODELE DE JOS TREBUIE SĂ FIE ÎN INTERIORUL CLASEI
     def on_left_click(self, event):
         if self.paused:
             overlay_x1 = self.overlay_panel.winfo_x()
@@ -561,7 +551,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
 
     def _salvare_in_fundal(self, frame_copy, points, img_path, lbl_path):
         cv2.imwrite(img_path, frame_copy)
-
         class_id = self.classes.index(self.class_name) if self.class_name in self.classes else 0
         yolo_coords = []
         for x, y in points:
@@ -569,18 +558,15 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
             ny = max(0.0, min(1.0, y / float(self.win_h)))
             yolo_coords.append(f"{nx:.6f} {ny:.6f}")
 
-        line = f"{class_id} " + " ".join(yolo_coords) + "\n"
         with open(lbl_path, "w", encoding="utf-8") as f:
-            f.write(line)
+            f.write(f"{class_id} " + " ".join(yolo_coords) + "\n")
 
     def pornese_ghid_rotire(self):
         self.stage = 2
         self.showing_turn_guide = True
         self.turn_guide_start_time = time.time()
         self.auto_capture_count = 0 
-        self.lbl_instructions.configure(
-            text="Pregătiți-vă: Modificați poziția obiectului!"
-        )
+        self.lbl_instructions.configure(text="Pregătiți-vă: Modificați poziția obiectului!")
 
     def finalizeaza_procesul(self):
         self.stage = 4
@@ -592,13 +578,35 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.after(2000, self.on_close)
 
     def on_close(self):
-        self.is_running = False
-        if self.cap:
-            self.cap.release()
+        # Setăm flag-ul care previne update_webcam să mai citească de pe cameră
+        self._is_closing = True
+        self.is_running = False 
         
+        # Așteptăm 100ms ca orice "cap.read()" rămas în execuție să se termine
+        # Asta previne eroarea de MSMF (Media Foundation)
+        self.after(100, self._perform_close_cleanup)
+
+    def _perform_close_cleanup(self):
+        # 1. Eliberează camera abia acum
+        if self.cap is not None:
+            if self.cap.isOpened():
+                self.cap.release()
+            self.cap = None
+            
+        cv2.destroyAllWindows()
+
+        # 2. Apelează callback-ul dacă există
         if self.callback_refresh:
             self.callback_refresh()
-        self.parent.deiconify()
+            
+        # 3. Afișează fereastra părinte
+        try:
+            if getattr(self, "parent", None) and self.parent.winfo_exists():
+                self.parent.deiconify()
+        except Exception:
+            pass
+
+        # 4. Închide fereastra curentă
         self.destroy()
 
 if __name__ == "__main__":
@@ -611,5 +619,14 @@ if __name__ == "__main__":
 
     customtkinter.set_appearance_mode("Dark")
     root = customtkinter.CTk()
-    app = RealtimeCaptureWindow(parent=root)
+    
+    def on_app_exit():
+        try:
+            # Folosim quit() in loc de destroy() in callback pentru o inchidere curata a mainloop-ului
+            root.quit()
+        except Exception:
+            pass
+        
+    app = RealtimeCaptureWindow(parent=root, callback_refresh=on_app_exit)
+    root.protocol("WM_DELETE_WINDOW", on_app_exit)
     root.mainloop()
