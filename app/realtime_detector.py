@@ -562,27 +562,39 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.after(2000, self.on_close)
 
     def on_close(self):
+        # 1. Previne rularea multiplă a procesului de închidere
+        if getattr(self, "_is_closing", False):
+            return
+            
         self._is_closing = True
         self.is_running = False 
-        self.after(100, self._perform_close_cleanup)
+        
+        # Oprește bucla camerei web și dă comanda de eliberare după 100ms
+        self.after(100, self._elibereaza_hardware_camera)
 
-    def _perform_close_cleanup(self):
-        # 1. Eliberează camera abia acum
+    def _elibereaza_hardware_camera(self):
+        # 2. Eliberăm resursa camerei
         if self.cap is not None:
             if self.cap.isOpened():
                 self.cap.release()
             self.cap = None
             
         cv2.destroyAllWindows()
+        
+        # 3. Așteptăm o jumătate de secundă pentru ca sistemul de operare/driverul 
+        # să elibereze fizic portul USB, FĂRĂ a bloca interfața (folosim .after în loc de time.sleep)
+        self.after(500, self._perform_close_cleanup)
 
+    def _perform_close_cleanup(self):
+        # 4. Acum hardware-ul este liber 100%. Redeschidem fereastra părinte
         if self.callback_refresh:
             self.callback_refresh()
+            
         try:
             if getattr(self, "parent", None) and self.parent.winfo_exists():
                 self.parent.deiconify()
         except Exception:
             pass
-
 
         self.destroy()
 

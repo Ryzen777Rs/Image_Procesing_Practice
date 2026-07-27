@@ -61,6 +61,8 @@ def main():
 
     try:
         from ultralytics import YOLO
+        import torch
+
         cale_model = (
             "yolov8n.pt"
             if args.model == "Model YOLO neantrenat" or not args.model
@@ -92,6 +94,9 @@ def main():
             exist_ok=True,  
         )
 
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         sys.stdout.flush()
 
     except ImportError:
@@ -100,5 +105,6 @@ def main():
     except Exception as e:
         sys.stdout.flush()
         sys.exit(1)
+
 if __name__ == "__main__":
     main()

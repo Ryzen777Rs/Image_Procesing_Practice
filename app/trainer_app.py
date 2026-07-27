@@ -1684,14 +1684,17 @@ class TrainWindow(customtkinter.CTkToplevel):
             self.incarca_imagini()
 
     def deschide_detectie_live(self):
+        # 1. (Opțional, dar recomandat) Ascunde fereastra principală cât timp ești în modul Realtime
         self.withdraw()
-        app_captura = RealtimeCaptureWindow(parent=self.master if hasattr(self, "master") else self)
         
-        def la_inchidere_live():
-            app_captura.destroy()
-            self.deiconify()
-            
-        app_captura.protocol("WM_DELETE_WINDOW", la_inchidere_live)
+        # 2. Deschide fereastra de detecție
+        app_captura = RealtimeCaptureWindow(parent=self)
+        
+        # 3. Blochează execuția scriptului principal AICI până când 'app_captura' este distrusă
+        self.wait_window(app_captura)
+        
+        # 4. Fereastra 'app_captura' a fost distrusă, readucem fereastra principală pe ecran
+        self.deiconify()
 
     def _sterge_imagini_selectate(self):
         for cale in self.imagini_selectate_stergere:

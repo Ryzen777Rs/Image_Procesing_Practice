@@ -13,4 +13,4 @@ if not exist "python_embed\python.exe" (
 "python_embed\python.exe" -m compileall -q "app"
 
 :: 3. Run application
- "python_embed\python.exe" "app\detector_app.py"
+ start "" "python_embed\pythonw.exe" "app\detector_app.py"
