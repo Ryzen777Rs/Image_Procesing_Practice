@@ -13,4 +13,4 @@ if not exist "python_embed\python.exe" (
 "python_embed\python.exe" -m compileall -q "app"
 
 :: 3. Pornim aplicatia
-start "" "python_embed\pythonw.exe" "app\detector_app.py"
+ "python_embed\python.exe" "app\detector_app.py"

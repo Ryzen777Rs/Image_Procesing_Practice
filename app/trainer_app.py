@@ -612,23 +612,19 @@ class TrainWindow(customtkinter.CTkToplevel):
 
     def _urmareste_fereastra_principala(self, event):
         if str(event.widget) == str(self):
-            x = self.winfo_rootx()
-            y = self.winfo_rooty()
-            w = self.winfo_width()
-            h = self.winfo_height()
+            geo = self._obtine_geometrie_scalata()
             
             if hasattr(self, 'modal_overlay') and self.modal_overlay is not None and self.modal_overlay.winfo_exists():
-                self.modal_overlay.geometry(f"{w}x{h}+{x}+{y}")
+                self.modal_overlay.geometry(geo)
                 self.modal_overlay.lift()
                 
             if hasattr(self, 'modal_cuda') and self.modal_cuda is not None and self.modal_cuda.winfo_exists():
-                self.modal_cuda.geometry(f"{w}x{h}+{x}+{y}")
+                self.modal_cuda.geometry(geo)
                 self.modal_cuda.lift()
                 
             if hasattr(self, 'modal_stergere') and self.modal_stergere is not None and self.modal_stergere.winfo_exists():
-                self.modal_stergere.geometry(f"{w}x{h}+{x}+{y}")
+                self.modal_stergere.geometry(geo)
                 self.modal_stergere.lift()
-
     def _arata_modale_la_restaurare(self, event):
         if str(event.widget) == str(self):
             if hasattr(self, 'modal_overlay') and self.modal_overlay is not None and self.modal_overlay.winfo_exists():
@@ -674,14 +670,11 @@ class TrainWindow(customtkinter.CTkToplevel):
     def initiaza_instalare_cuda(self):
         generatie, versiune_cuda, status = self.obtine_versiune_cuda_recomandata(self.sys_gpu_nume)
         
-        x = self.winfo_rootx()
-        y = self.winfo_rooty()
-        w = self.winfo_width()
-        h = self.winfo_height()
+        geo = self._obtine_geometrie_scalata()
 
         self.modal_cuda = customtkinter.CTkToplevel(self)
         self.modal_cuda.overrideredirect(True)
-        self.modal_cuda.geometry(f"{w}x{h}+{x}+{y}")
+        self.modal_cuda.geometry(geo)
         self.modal_cuda.transient(self)
         self.modal_cuda.grab_set()
 
@@ -2317,7 +2310,21 @@ class TrainWindow(customtkinter.CTkToplevel):
         toate_bifate = all(var.get() for var in self.vars_clase.values())
         self.var_all_clase.set(toate_bifate)
         self.actualizeaza_stare_buton_antrenare()
-
+    def _obtine_geometrie_scalata(self):
+            """
+            Neutralizează dubla scalare CustomTkinter pentru ferestrele modale (overlays).
+            """
+            try:
+                scale = self._get_window_scaling()
+            except AttributeError:
+                scale = 1.0
+                
+            w = int(self.winfo_width() / scale)
+            h = int(self.winfo_height() / scale)
+            x = int(self.winfo_rootx() / scale)
+            y = int(self.winfo_rooty() / scale)
+            
+            return f"{w}x{h}+{x}+{y}"
     def porneste_antrenarea(self):
         clase_selectate = [c for c, var in self.vars_clase.items() if var.get()]
         model_ales = self.var_model_selectat.get()
@@ -2388,11 +2395,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.modal_overlay = customtkinter.CTkToplevel(self)
         self.modal_overlay.overrideredirect(True)
 
-        w = self.winfo_width()
-        h = self.winfo_height()
-        x = self.winfo_rootx()
-        y = self.winfo_rooty()
-        self.modal_overlay.geometry(f"{w}x{h}+{x}+{y}")
+        self.modal_overlay.geometry(self._obtine_geometrie_scalata())
 
         self.modal_overlay.attributes("-alpha", 0.85)
     

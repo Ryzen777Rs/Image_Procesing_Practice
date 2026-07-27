@@ -6,7 +6,7 @@ import numpy as np
 import customtkinter
 import threading
 import platform
-from PIL import Image, ImageTk
+from PIL import Image
 
 class RealtimeCaptureWindow(customtkinter.CTkToplevel):
     def __init__(self, parent, base_dir=None, callback_refresh=None):
@@ -83,14 +83,26 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.start_camera()
 
     def get_tracker(self):
-        try:
+        # 1. Încearcă KCF
+        if hasattr(cv2, 'TrackerKCF_create'):
             return cv2.TrackerKCF_create()
-        except AttributeError:
-            try:
-                return cv2.legacy.TrackerKCF_create()
-            except AttributeError:
-                print("Avertisment: Tracker-ul KCF nu este disponibil.")
-                return None
+        elif hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'TrackerKCF_create'):
+            return cv2.legacy.TrackerKCF_create()
+        
+        # 2. Încearcă CSRT (frecvent disponibil și mai precis decat KCF)
+        if hasattr(cv2, 'TrackerCSRT_create'):
+            return cv2.TrackerCSRT_create()
+        elif hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'TrackerCSRT_create'):
+            return cv2.legacy.TrackerCSRT_create()
+
+        # 3. Încearcă MIL
+        if hasattr(cv2, 'TrackerMIL_create'):
+            return cv2.TrackerMIL_create()
+        elif hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'TrackerMIL_create'):
+            return cv2.legacy.TrackerMIL_create()
+
+        print("Avertisment: Niciun tracker compatibil nu este disponibil. Instalați opencv-contrib-python")
+        return None
 
     def load_classes(self):
         if hasattr(self.parent, "classes"):
@@ -148,17 +160,17 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.combo_class.pack(side="left", padx=(0, 15))
         self.combo_class.bind("<KeyRelease>", self.update_class_count)
         
-        customtkinter.CTkLabel(self.frame_input, text="Nr. Poze (Total):", font=("Roboto", 13, "bold"), text_color="#ffffff").pack(side="left", padx=(0, 5))
+        customtkinter.CTkLabel(self.frame_input, text="Nr. Poze:", font=("Roboto", 13, "bold"), text_color="#ffffff").pack(side="left", padx=(0, 5))
         self.entry_num_photos = customtkinter.CTkEntry(self.frame_input, placeholder_text="25", width=60, font=("Roboto", 13))
         self.entry_num_photos.pack(side="left", padx=(0, 15))
-        customtkinter.CTkLabel(self.frame_input, text="Etape:", font=("Roboto", 13, "bold"), text_color="#ffffff").pack(side="left", padx=(0, 5))
         
+        customtkinter.CTkLabel(self.frame_input, text="Etape:", font=("Roboto", 13, "bold"), text_color="#ffffff").pack(side="left", padx=(0, 5))
         self.entry_num_stages = customtkinter.CTkEntry(
             self.frame_input, placeholder_text="4", width=40, 
             font=("Roboto", 13)
         )
         self.entry_num_stages.pack(side="left", padx=(0, 15))
-        # AICI AM MODIFICAT CULORILE PENTRU A FI CA PE DISCORD
+
         self.btn_confirm = customtkinter.CTkButton(
             self.frame_input, 
             text="Confirmă", 
@@ -177,14 +189,14 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.lbl_class_count.pack(side="left", padx=(0, 15))
 
         self.btn_restart_phase = customtkinter.CTkButton(
-            self.frame_stats, text="Repetă Etapa (Pierdut)", fg_color="#ff8c00", hover_color="#e67e00", 
+            self.frame_stats, text="Repetă Etapa", fg_color="#ff8c00", hover_color="#e67e00", 
             font=("Roboto", 11, "bold"), height=24, command=self.restart_current_phase
         )
 
         self.btn_clear_points = customtkinter.CTkButton(self.frame_stats, text="Șterge Puncte", fg_color="#b53737", hover_color="#d94343", font=("Roboto", 11, "bold"), width=90, height=24, command=self.sterge_punctele)
         self.btn_clear_points.pack(side="right", padx=(0, 0))
 
-        self.lbl_instructions = customtkinter.CTkLabel(self.overlay_panel, text="Alegeți sau scrieți o clasă nouă în listă, apoi Confirmă.", font=("Roboto", 13, "bold"), text_color="#e0e0e0", wraplength=650)
+        self.lbl_instructions = customtkinter.CTkLabel(self.overlay_panel, text="Alegeți sau scrieți o clasă nouă, apoi Confirmă.", font=("Roboto", 13, "bold"), text_color="#e0e0e0", wraplength=650)
         self.lbl_instructions.pack(padx=15, pady=(4, 15))
 
         self.update_class_count()
@@ -234,8 +246,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
                 self.combo_class.configure(values=self.classes)
                 self.save_classes()
 
-            # --- ÎNLOCUIEȘTE DE AICI ---
-            # 1. Preluăm numărul TOTAL DE POZE din interfață
             try:
                 num_photos_input = self.entry_num_photos.get().strip()
                 if num_photos_input:
@@ -243,9 +253,8 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
                     if val_photos > 0:
                         self.total_photos_target = val_photos
             except ValueError:
-                pass # Rămâne la valoarea implicită de 20 dacă inputul e invalid
+                pass 
 
-            # 2. Preluăm numărul de ETAPE din interfață
             try:
                 num_stages_input = self.entry_num_stages.get().strip()
                 if num_stages_input:
@@ -253,14 +262,12 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
                     if 1 <= val <= 100:
                         self.num_stages_target = val
             except ValueError:
-                pass # Rămâne la valoarea implicită de 4 dacă inputul e invalid
+                pass 
 
-            # Acum calculele folosesc valorile actualizate corect
             base = self.total_photos_target // self.num_stages_target
             remainder = self.total_photos_target % self.num_stages_target
             self.captures_per_phase = [base + (1 if i < remainder else 0) for i in range(self.num_stages_target)]
             self.target_auto_captures_per_angle = self.captures_per_phase[0]
-            # --- PÂNĂ AICI ---
 
             self.rotations = [(f"Etapa {i+1}", 0) for i in range(self.num_stages_target)]
             self.dir_img_class = os.path.join(self.img_dir, self.class_name)
@@ -271,21 +278,25 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
             self.stage = 1
             self.combo_class.configure(state="disabled")
             self.entry_num_photos.configure(state="disabled")
+            self.entry_num_stages.configure(state="disabled")
             self.btn_confirm.configure(state="disabled")
             
             self.lbl_instructions.configure(
                 text=f"Pasul 1: Fixați obiectul. Apăsați ENTER pentru a pune pe pauză și a marca conturul (poligon)."
             )
             self.update_class_count()
+
     def start_camera(self):
         self.lbl_instructions.configure(text="Se inițializează camera... Vă rugăm așteptați.", text_color="#ffcc00")
         threading.Thread(target=self._init_camera_bg, daemon=True).start()
 
     def _init_camera_bg(self):
-        if platform.system() == "Windows":
+        # Încearcă varianta standard prima dată
+        cap = cv2.VideoCapture(0)
+        
+        # Dacă pe Windows nu merge standardul, folosește DSHOW
+        if not cap.isOpened() and platform.system() == "Windows":
             cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        else:
-            cap = cv2.VideoCapture(0)
             
         self.after(0, self._camera_ready, cap)
 
@@ -295,7 +306,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.lbl_instructions.configure(text="Alegeți sau scrieți o clasă nouă în listă, apoi Confirmă.", text_color="#e0e0e0")
         self.update_webcam()
 
-    
     def restart_current_phase(self):
         for img_path, lbl_path in self.current_phase_files:
             if os.path.exists(img_path): os.remove(img_path)
@@ -414,7 +424,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
 
     def deseneaza_poligon_pe_cadru(self, frame):
         n = len(self.points)
-        # Culoarea #5865F2 convertită în format BGR pentru OpenCV
         culoare_violet = (242, 101, 88) 
         
         if n > 1:
@@ -427,12 +436,31 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         for px, py in self.points:
             cv2.circle(frame, (px, py), 5, culoare_violet, -1)
             cv2.circle(frame, (px, py), 6, (255, 255, 255), 1)
+
     def afiseaza_pe_ecran(self, frame_bgr):
         rgb_img = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb_img)
         ctk_img = customtkinter.CTkImage(light_image=pil_img, dark_image=pil_img, size=(self.win_w, self.win_h))
         self.video_lbl.configure(image=ctk_img)
+        # FOARTE IMPORTANT: Păstrează referința pentru a evita garbage collection (Ecran negru)
+        self.video_lbl.image = ctk_img 
 
+    def _get_mapped_coords(self, event):
+        lbl_w = self.video_lbl.winfo_width()
+        lbl_h = self.video_lbl.winfo_height()
+
+        if lbl_w <= 0 or lbl_h <= 0:
+            return event.x, event.y
+
+        scale_x = self.win_w / float(lbl_w)
+        scale_y = self.win_h / float(lbl_h)
+
+        real_x = int(event.x * scale_x)
+        real_y = int(event.y * scale_y)
+        
+        return real_x, real_y
+
+    # METODELE DE JOS TREBUIE SĂ FIE ÎN INTERIORUL CLASEI
     def on_left_click(self, event):
         if self.paused:
             overlay_x1 = self.overlay_panel.winfo_x()
@@ -442,11 +470,14 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
             
             if (overlay_x1 < event.x < overlay_x2) and (overlay_y1 < event.y < overlay_y2):
                 return
-            self.points.append((event.x, event.y))
+                
+            real_x, real_y = self._get_mapped_coords(event)
+            self.points.append((real_x, real_y))
 
     def on_right_press(self, event):
         if self.paused:
-            idx = self.get_nearest_point(event.x, event.y)
+            real_x, real_y = self._get_mapped_coords(event)
+            idx = self.get_nearest_point(real_x, real_y)
             if idx is not None:
                 self.selected_point_idx = idx
                 self.is_dragging = False
@@ -454,7 +485,8 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
     def on_right_drag(self, event):
         if self.paused and self.selected_point_idx is not None:
             self.is_dragging = True
-            self.points[self.selected_point_idx] = (event.x, event.y)
+            real_x, real_y = self._get_mapped_coords(event)
+            self.points[self.selected_point_idx] = (real_x, real_y)
 
     def on_right_release(self, event):
         if self.paused and self.selected_point_idx is not None:
@@ -541,8 +573,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         with open(lbl_path, "w", encoding="utf-8") as f:
             f.write(line)
 
-        
-
     def pornese_ghid_rotire(self):
         self.stage = 2
         self.showing_turn_guide = True
@@ -572,6 +602,14 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.destroy()
 
 if __name__ == "__main__":
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            pass
+
+    customtkinter.set_appearance_mode("Dark")
     root = customtkinter.CTk()
     app = RealtimeCaptureWindow(parent=root)
     root.mainloop()
