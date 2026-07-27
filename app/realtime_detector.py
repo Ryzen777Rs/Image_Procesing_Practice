@@ -55,13 +55,7 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
 
         self.stage = 0 
 
-        # Cele 4 rotații cerute + unghiul tinta pt cub
-        self.rotations = [
-            ("Plasați obiectul în sus la 0 grade", 0),
-            ("Plasați obiectul în jos la 180 grade", 180),
-            ("Plasați obiectul la dreapta la 90 de grade", 90),
-            ("Plasați obiectul la stânga la 270 de grade", 270)
-        ]
+        self.num_stages_target = 4
         
         self.current_rot_idx = 0
         self.auto_capture_count = 0
@@ -90,12 +84,12 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
 
     def get_tracker(self):
         try:
-            return cv2.TrackerCSRT_create()
+            return cv2.TrackerKCF_create()
         except AttributeError:
             try:
-                return cv2.legacy.TrackerCSRT_create()
+                return cv2.legacy.TrackerKCF_create()
             except AttributeError:
-                print("Avertisment: Tracker-ul CSRT nu este disponibil.")
+                print("Avertisment: Tracker-ul KCF nu este disponibil.")
                 return None
 
     def load_classes(self):
@@ -157,7 +151,13 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         customtkinter.CTkLabel(self.frame_input, text="Nr. Poze (Total):", font=("Roboto", 13, "bold"), text_color="#ffffff").pack(side="left", padx=(0, 5))
         self.entry_num_photos = customtkinter.CTkEntry(self.frame_input, placeholder_text="25", width=60, font=("Roboto", 13))
         self.entry_num_photos.pack(side="left", padx=(0, 15))
-
+        customtkinter.CTkLabel(self.frame_input, text="Etape:", font=("Roboto", 13, "bold"), text_color="#ffffff").pack(side="left", padx=(0, 5))
+        
+        self.entry_num_stages = customtkinter.CTkEntry(
+            self.frame_input, placeholder_text="4", width=40, 
+            font=("Roboto", 13)
+        )
+        self.entry_num_stages.pack(side="left", padx=(0, 15))
         # AICI AM MODIFICAT CULORILE PENTRU A FI CA PE DISCORD
         self.btn_confirm = customtkinter.CTkButton(
             self.frame_input, 
@@ -234,17 +234,35 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
                 self.combo_class.configure(values=self.classes)
                 self.save_classes()
 
+            # --- ÎNLOCUIEȘTE DE AICI ---
+            # 1. Preluăm numărul TOTAL DE POZE din interfață
             try:
-                num_input = self.entry_num_photos.get().strip()
-                self.total_photos_target = int(num_input) if num_input else 20
+                num_photos_input = self.entry_num_photos.get().strip()
+                if num_photos_input:
+                    val_photos = int(num_photos_input)
+                    if val_photos > 0:
+                        self.total_photos_target = val_photos
             except ValueError:
-                self.total_photos_target = 20
+                pass # Rămâne la valoarea implicită de 20 dacă inputul e invalid
 
-            base = self.total_photos_target // 4
-            remainder = self.total_photos_target % 4
-            self.captures_per_phase = [base + (1 if i < remainder else 0) for i in range(4)]
+            # 2. Preluăm numărul de ETAPE din interfață
+            try:
+                num_stages_input = self.entry_num_stages.get().strip()
+                if num_stages_input:
+                    val = int(num_stages_input)
+                    if 1 <= val <= 100:
+                        self.num_stages_target = val
+            except ValueError:
+                pass # Rămâne la valoarea implicită de 4 dacă inputul e invalid
+
+            # Acum calculele folosesc valorile actualizate corect
+            base = self.total_photos_target // self.num_stages_target
+            remainder = self.total_photos_target % self.num_stages_target
+            self.captures_per_phase = [base + (1 if i < remainder else 0) for i in range(self.num_stages_target)]
             self.target_auto_captures_per_angle = self.captures_per_phase[0]
+            # --- PÂNĂ AICI ---
 
+            self.rotations = [(f"Etapa {i+1}", 0) for i in range(self.num_stages_target)]
             self.dir_img_class = os.path.join(self.img_dir, self.class_name)
             self.dir_lbl_class = os.path.join(self.lbl_dir, self.class_name)
             os.makedirs(self.dir_img_class, exist_ok=True)
@@ -256,10 +274,9 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
             self.btn_confirm.configure(state="disabled")
             
             self.lbl_instructions.configure(
-                text=f"Pasul 1: Fixați obiectul la 0 grade. Apăsați ENTER pentru a pune pe pauză și a marca conturul (poligon)."
+                text=f"Pasul 1: Fixați obiectul. Apăsați ENTER pentru a pune pe pauză și a marca conturul (poligon)."
             )
             self.update_class_count()
-
     def start_camera(self):
         self.lbl_instructions.configure(text="Se inițializează camera... Vă rugăm așteptați.", text_color="#ffcc00")
         threading.Thread(target=self._init_camera_bg, daemon=True).start()
@@ -278,61 +295,7 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.lbl_instructions.configure(text="Alegeți sau scrieți o clasă nouă în listă, apoi Confirmă.", text_color="#e0e0e0")
         self.update_webcam()
 
-    def draw_rotating_cube(self, frame, progress, target_angle):
-        h, w = frame.shape[:2]
-        cx, cy = w // 2, h // 2
-        size = 150
-        
-        prev_angle = self.rotations[max(0, self.current_rot_idx - 1)][1] if self.current_rot_idx > 0 else -90
-        smooth_t = progress * progress * (3 - 2 * progress)
-        current_z_angle = prev_angle + (target_angle - prev_angle) * smooth_t
-        
-        theta = math.radians(current_z_angle)
-        phi = math.radians(20) 
-        
-        nodes = np.array([
-            [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
-            [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]
-        ], dtype=float)
-
-        rot_z = np.array([
-            [math.cos(theta), -math.sin(theta), 0],
-            [math.sin(theta), math.cos(theta), 0],
-            [0, 0, 1]
-        ])
-        
-        rot_x = np.array([
-            [1, 0, 0],
-            [0, math.cos(phi), -math.sin(phi)],
-            [0, math.sin(phi), math.cos(phi)]
-        ])
-
-        projected = []
-        for node in nodes:
-            rotated = np.dot(rot_z, node)
-            rotated = np.dot(rot_x, rotated)
-            x = int(rotated[0] * size + cx)
-            y = int(rotated[1] * size + cy)
-            projected.append((x, y))
-
-        edges = [
-            (0,1), (1,2), (2,3), (3,0),
-            (4,5), (5,6), (6,7), (7,4),
-            (0,4), (1,5), (2,6), (3,7) 
-        ]
-
-        front_face_edges = [(4,5), (5,6), (6,7), (7,4)]
-        
-        for i, edge in enumerate(edges):
-            pt1, pt2 = projected[edge[0]], projected[edge[1]]
-            color = (255, 255, 0) if edge in front_face_edges else (200, 200, 200)
-            thickness = 4 if edge in front_face_edges else 2
-            cv2.line(frame, pt1, pt2, color, thickness, cv2.LINE_AA)
-
-        face_center_x = sum([projected[i][0] for i in [4,5,6,7]]) // 4
-        face_center_y = sum([projected[i][1] for i in [4,5,6,7]]) // 4
-        cv2.circle(frame, (face_center_x, face_center_y), 10, (0, 0, 255), -1)
-
+    
     def restart_current_phase(self):
         for img_path, lbl_path in self.current_phase_files:
             if os.path.exists(img_path): os.remove(img_path)
@@ -387,14 +350,10 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
             frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
             frame = cv2.addWeighted(frame, 0.3, np.zeros_like(frame), 0.7, 0)
 
-            rot_text, target_angle = self.rotations[self.current_rot_idx]
-            
             elapsed = time.time() - self.turn_guide_start_time
-            progress = min(1.0, elapsed / 2.5)
             
-            cv2.putText(frame, f"INTOARCE OBIECTUL: {rot_text.upper()}", (50, 100),
+            cv2.putText(frame, "MODIFICATI POZITIA OBIECTULUI", (50, int(self.win_h / 2)),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3, cv2.LINE_AA)
-            self.draw_rotating_cube(frame, progress, target_angle)
 
             if elapsed > 2.5:
                 self.showing_turn_guide = False
@@ -403,7 +362,7 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
                 self.tracker = None
                 self.points = []
                 self.lbl_instructions.configure(
-                    text=f"{rot_text}. Apăsați ENTER pentru a pune pe pauză și a re-desena poligonul."
+                text="Etapă resetată. Modificați poziția obiectului. Apăsați ENTER pentru a pune pe pauză și a re-desena."
                 )
 
         elif self.stage == 3:
@@ -430,6 +389,7 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
                     self.salveaza_adnotare_poligon(frame, shifted_points)
                     self.last_auto_save_time = time.time()
                     self.auto_capture_count += 1
+                    self.update_class_count_fast()
                     self.lbl_instructions.configure(
                         text=f"Auto-captură [{self.current_rot_idx+1}/{len(self.rotations)}]: {self.auto_capture_count}/{self.target_auto_captures_per_angle} poze salvate."
                     )
@@ -581,16 +541,15 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         with open(lbl_path, "w", encoding="utf-8") as f:
             f.write(line)
 
-        self.after(0, self.update_class_count_fast)
+        
 
     def pornese_ghid_rotire(self):
         self.stage = 2
         self.showing_turn_guide = True
         self.turn_guide_start_time = time.time()
         self.auto_capture_count = 0 
-        rot_text, _ = self.rotations[self.current_rot_idx]
         self.lbl_instructions.configure(
-            text=f"Pregătiți-vă: {rot_text}!"
+            text="Pregătiți-vă: Modificați poziția obiectului!"
         )
 
     def finalizeaza_procesul(self):

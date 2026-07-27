@@ -21,7 +21,6 @@ Remove-Item "uv.zip" -Force
 Write-Host "[4/4] Instalez dependentele din pyproject.toml cu UV..." -ForegroundColor Green
 .\uv_tool\uv.exe pip install -r pyproject.toml --target "python_embed\Lib\site-packages" --python "python_embed\python.exe"
 
-# Curatam utilitarul UV
 Remove-Item "uv_tool" -Recurse -Force
 
 Write-Host "GATA! Configurarea initiala s-a terminat!" -ForegroundColor Cyan

@@ -1,6 +1,7 @@
 import hashlib
 import os
 import re
+import sys
 from pathlib import Path
 import platform
 import shutil
@@ -658,13 +659,13 @@ class TrainWindow(customtkinter.CTkToplevel):
     def obtine_versiune_cuda_recomandata(self, sys_gpu_nume):
         nume_mic = sys_gpu_nume.lower()
         if any(x in nume_mic for x in ["rtx 50"]):
-            return "Blackwell (Seria RTX 5000)", "CUDA 12.8+", "Generație nouă"
+            return "Blackwell (Seria RTX 5000)", "CUDA 12.9", "Generație nouă"
         elif any(x in nume_mic for x in ["rtx 40"]):
             return "Ada Lovelace (Seria RTX 4000)", "CUDA 12.1 sau 12.4", "Generație curentă"
         elif any(x in nume_mic for x in ["rtx 30"]):
             return "Ampere (Seria RTX 3000)", "CUDA 11.8, 12.1, 12.4", "Suportat"
         elif any(x in nume_mic for x in ["gtx 16", "rtx 20"]):
-            return "Turing (Seria GTX 1600 / RTX 2000)", "CUDA 11.8 sau 12.1", "Suportat"
+            return "Turing (Seria GTX 1600 / RTX 2000)", "CUDA 11.8", "Suportat"
         elif any(x in nume_mic for x in ["gtx 10"]):
             return "Pascal (Seria GTX 1000)", "CUDA 11.8", "Suportat legacy"
         elif any(x in nume_mic for x in ["gtx 6", "gtx 7", "gtx 9"]):
@@ -719,78 +720,130 @@ class TrainWindow(customtkinter.CTkToplevel):
         threading.Thread(target=self._worker_descarcare_cuda, args=(versiune_cuda,), daemon=True).start()
 
     def _worker_descarcare_cuda(self, versiune_cuda):
-        cuda_urls = {
-            "10.2": "https://developer.download.nvidia.com/compute/cuda/10.2/Prod/network_installers/cuda_10.2.89_win10_network.exe",
-            "11.8": "https://developer.download.nvidia.com/compute/cuda/11.8.0/network_installers/cuda_11.8.0_windows_network.exe",
-            "12.1": "https://developer.download.nvidia.com/compute/cuda/12.1.0/network_installers/cuda_12.1.0_windows_network.exe",
-            "12.8": "https://developer.download.nvidia.com/compute/cuda/12.8.0/network_installers/cuda_12.8.0_windows_network.exe"
-        }
+        # 1. Mapăm versiunea CUDA din string-ul tău la indexul corect PyTorch
+        torch_cu = "cu118" # Default de siguranță
+        if "12.1" in versiune_cuda:
+            torch_cu = "cu121"
+        elif "12.4" in versiune_cuda or "12.8" in versiune_cuda:
+            torch_cu = "cu124" # Versiuni noi suportate de PyTorch
 
-        url_descarcare = cuda_urls.get("11.8")
-        for ver, url in cuda_urls.items():
-            if ver in versiune_cuda:
-                url_descarcare = url
-                break
+        # ---> MODIFICARE 1: Folosim calea absolută către uv.exe local
+        cale_uv = os.path.join(self.DIRECTOR_CURENT, "uv.exe")
+        
+        # Dacă cumva nu-l găsește lângă script, va încerca totuși varianta globală
+        if not os.path.exists(cale_uv):
+            print(f"⚠️ Avertisment: Nu am găsit uv.exe în {self.DIRECTOR_CURENT}. Încerc varianta globală.")
+            cale_uv = "uv"
 
-        nume_fisier = "cuda_network_installer.exe"
-        cale_salvare = os.path.join(os.getcwd(), nume_fisier)
+        # 2. Comanda folosind calea corectă
+        cmd = [
+    cale_uv, "pip", "install", 
+    "torch", "torchvision",                     # Specifici pachetele separat
+    "--index-url", f"https://download.pytorch.org/whl/{torch_cu}", # Trimiți indexul corect cu flag-ul --index-url
+    "--reinstall",
+    "--python", sys.executable                  # Forțează uv să folosească Python-ul curent
+]
+
+        print(f"\n[DEBUG] Se execută comanda: {' '.join(cmd)}\n")
 
         try:
-            with urllib.request.urlopen(url_descarcare) as raspuns:
-                total_bytes = int(raspuns.headers.get('content-length', 0))
-                bytes_descarcati = 0
-                chunk_size = 16384
-                start_time = time.time()
+            creation_flags = 0
+            if platform.system() == "Windows":
+                # ---> MODIFICARE 2: Poți lăsa linia de mai jos comentată dacă vrei să 
+                # îți apară și fereastra neagră de CMD peste aplicație, 
+                # sau o poți lăsa activă deoarece erorile vor fi printate oricum în consola IDE-ului.
+                creation_flags = subprocess.CREATE_NO_WINDOW
 
-                with open(cale_salvare, 'wb') as fisier:
-                    while True:
-                        if self.cancel_cuda_event.is_set():
-                            fisier.close()
-                            if os.path.exists(cale_salvare):
-                                os.remove(cale_salvare)
-                            return
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.STDOUT, 
+                text=True,
+                creationflags=creation_flags
+            )
 
-                        chunk = raspuns.read(chunk_size)
-                        if not chunk:
-                            break
+            # Citim output-ul în timp real
+            progres_curent = 0.0
 
-                        fisier.write(chunk)
-                        bytes_descarcati += len(chunk)
+            # Citim output-ul în timp real
+            for linie in process.stdout:
+                # Dacă userul a apăsat Cancel
+                if self.cancel_cuda_event.is_set():
+                    process.terminate()
+                    return
+                
+                linie_str = linie.strip()
+                print(f"[UV TERMINAL] {linie_str}")
 
-                        if total_bytes > 0:
-                            val_float = bytes_descarcati / total_bytes
-                            procent = int(val_float * 100)
-                            
-                            timp_scurs = time.time() - start_time
-                            viteza = bytes_descarcati / timp_scurs if timp_scurs > 0 else 1
-                            timp_ramas = (total_bytes - bytes_descarcati) / viteza
+                # --- CALCUL PROGRES APROXIMATIV ---
+                # 1. Căutăm procentaje explicite în output (ex: 45%)
+                match_procent = re.search(r'(\d{1,3})%', linie_str)
+                if match_procent:
+                    valoare = int(match_procent.group(1)) / 100.0
+                    if valoare > progres_curent:
+                        progres_curent = valoare
+                else:
+                    # 2. Dacă nu găsim procentaj, estimăm pe baza cuvintelor cheie
+                    linie_low = linie_str.lower()
+                    if "resolving" in linie_low and progres_curent < 0.1:
+                        progres_curent = 0.1
+                    elif "downloading" in linie_low or "fetching" in linie_low:
+                        # Incrementăm ușor la fiecare pachet descărcat
+                        if progres_curent < 0.7:
+                            progres_curent += 0.02 
+                    elif "installing" in linie_low or "extracting" in linie_low:
+                        if progres_curent < 0.8:
+                            progres_curent = 0.8
+                        elif progres_curent < 0.95:
+                            progres_curent += 0.01
 
-                            if int(time.time() * 10) % 2 == 0: 
-                                self.after(0, lambda v=val_float, p=procent, t=timp_ramas: self._actualizeaza_ui_cuda(v, p, t))
+                # Asigurăm că nu depășim 99% până nu se finalizează totul
+                progres_curent = min(progres_curent, 0.99)
 
-            if not self.cancel_cuda_event.is_set():
-                self.after(0, lambda: self._finalizeaza_instalare_cuda(cale_salvare))
+                # --- ACTUALIZARE UI ---
+                text_scurt = linie_str[:60]
+                self.after(0, lambda p=progres_curent, t=text_scurt: [
+                    self.cuda_progress.set(p) if hasattr(self, "cuda_progress") else None,
+                    self.lbl_cuda_status.configure(text=f"Instalare: {int(p*100)}% | {t}")
+                ])
+            process.wait()
+
+            if process.returncode == 0:
+                self.after(0, self._finalizeaza_instalare_cuda)
+            else:
+                self.after(0, lambda: self.lbl_cuda_status.configure(text=f"Eroare la instalare (Cod: {process.returncode}).", text_color="#FF6B6B"))
+                print(f"\n❌ [EROARE CRITICĂ] Comanda a eșuat cu codul {process.returncode}. Verifică log-urile de mai sus.")
 
         except Exception as e:
-            self.after(0, lambda: self.lbl_cuda_status.configure(text=f"Eroare descărcare: Verificați conexiunea."))
-            print(f"Eroare CUDA: {e}")
+            self.after(0, lambda: self.lbl_cuda_status.configure(text=f"Eroare lansare comandă (Vezi terminalul).", text_color="#FF6B6B"))
+            print(f"\n❌ [EROARE PYTHON] Nu s-a putut porni procesul: {e}\n")
 
     def _actualizeaza_ui_cuda(self, val_float, procent, timp_ramas):
         if hasattr(self, "cuda_progress") and self.modal_cuda.winfo_exists():
             self.cuda_progress.set(val_float)
             self.lbl_cuda_status.configure(text=f"Se descarcă... {procent}% (Rămas: ~{int(timp_ramas)}s)")
 
-    def _finalizeaza_instalare_cuda(self, cale_installer):
-        self.lbl_cuda_status.configure(text="Descărcare completă! Lansare installer...")
+    def _finalizeaza_instalare_cuda(self, cale_installer=None):
+        self.lbl_cuda_status.configure(text="Instalare completă! Aplicația se repornește automat...")
         
-        try:
-            subprocess.Popen([cale_installer])
-        except Exception as e:
-            self.lbl_cuda_status.configure(text="Eroare la lansarea aplicației.")
-            print(f"Eroare lansare installer: {e}")
+        # Completăm progress bar-ul la 100%
+        if hasattr(self, "cuda_progress"):
+            self.cuda_progress.set(1.0)
         
-        self.after(2000, lambda: [self.modal_cuda.grab_release(), self.modal_cuda.destroy()])
+        # Așteptăm 2.5 secunde pentru ca utilizatorul să poată citi mesajul de succes, apoi repornim
+        self.after(2500, self._executa_repornire_aplicatie)
 
+    def _executa_repornire_aplicatie(self):
+        try:
+            self.modal_cuda.grab_release()
+            self.modal_cuda.destroy()
+        except Exception as e:
+            print(f"Eroare la închiderea ferestrei modale: {e}")
+        
+        print("\n🔄 Se inițiază repornirea aplicației...\n")
+        
+        # Această comandă înlocuiește instantaneu procesul curent cu un nou proces Python identic
+        os.execl(sys.executable, sys.executable, *sys.argv)
     def _pe_enter_apasat(self, event=None):
         if self.mod_stergere_multipla:
             self.toggle_stergere_multipla()
@@ -1289,21 +1342,20 @@ class TrainWindow(customtkinter.CTkToplevel):
             # are grafică AMD, dar nu are o placă NVIDIA dedicată pe lângă ea.
             if are_amd and not are_nvidia:
                 este_amd = True
-
+        deja_are_cuda = (self.gpu_device_code == "cuda")
         self.btn_instaleaza_cuda = customtkinter.CTkButton(
             frame_titlu_setari,
             text="install driver",
             width=80,          
             height=24,
             font=("Roboto", 11, "bold"),
-            fg_color="gray" if este_amd else "#2e7d32",
-            hover_color="gray" if este_amd else "#1b5e20",
-            state="disabled" if este_amd else "normal",
+            fg_color="gray" if (este_amd or deja_are_cuda) else "#2e7d32",
+            hover_color="gray" if (este_amd or deja_are_cuda) else "#1b5e20",
+            state="disabled" if (este_amd or deja_are_cuda) else "normal",
             text_color_disabled="#4d4d4d",
             command=self.initiaza_instalare_cuda
         )
         self.btn_instaleaza_cuda.pack(side="right", padx=(0, 15))
-
         self.tooltip_window = None
         self.tooltip_timer = None
 
@@ -1335,7 +1387,9 @@ class TrainWindow(customtkinter.CTkToplevel):
                 "Daca sa instalat corect , reporniti programul."
             )
             
-            if este_amd:
+            if deja_are_cuda:
+                text_info = "Deja aveti drivere CUDA instalate si functionale!"
+            elif este_amd:
                 text_info = "Indisponibil, placa AMD\n" + text_info_baza
             else:
                 text_info = text_info_baza
@@ -1344,7 +1398,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                 self.tooltip_window, 
                 text=text_info,
                 font=("Roboto", 12),
-                text_color="#FF6B6B",
+                text_color="#FF6B6B" if not deja_are_cuda else "#4CAF50", # Verde dacă sunt instalate
                 justify="left",
                 wraplength=350,
                 bg_color="#2b2b2b"
@@ -2069,7 +2123,23 @@ class TrainWindow(customtkinter.CTkToplevel):
             print(f"Eroare la deschiderea editorului: {e}")
 
     def actualizeaza_stare_buton_antrenare(self, *args):
-        clase_ok = any(var.get() for var in self.vars_clase.values())
+        # --- MODIFICARE 1: Verificăm dacă clasa bifată are cel puțin o imagine în folder ---
+        extensii_valide = ('.png', '.jpg', '.jpeg', '.webp', '.bmp')
+
+        def clasa_are_imagini(nume_clasa):
+            cale_clasa = os.path.join(self.MAPA_IMAGINI, nume_clasa)
+            if os.path.exists(cale_clasa):
+                for root, _, files in os.walk(cale_clasa):
+                    for f in files:
+                        if f.lower().endswith(extensii_valide):
+                            return True
+            return False
+
+        # clasa trebuie să fie bifată ȘI să conțină imagini
+        clase_ok = any(
+            var.get() and clasa_are_imagini(nume)
+            for nume, var in self.vars_clase.items()
+        )
 
         culoare_eroare = "#FF4C4C"
         culoare_text_normal = "#DCE4EE"
@@ -2134,7 +2204,10 @@ class TrainWindow(customtkinter.CTkToplevel):
             hw_ok = False
 
         model_nume_ok = True
-        if self.var_model_selectat.get() == "Model YOLO neantrenat":
+        model_selectat = self.var_model_selectat.get()
+        if not model_selectat:
+            model_nume_ok = False
+        elif model_selectat == "Model YOLO neantrenat":
             nume_model = self.var_nume_model_nou.get().strip()
             
             if not nume_model or not re.match(r'^[\w\-]+$', nume_model):
@@ -2147,6 +2220,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             self.btn_antrenare.configure(state="normal", fg_color="#8B0000")
         else:
             self.btn_antrenare.configure(state="disabled", fg_color="gray")
+
 
     def actualizeaza_interfata_invatare(self):
         for widget in self.scroll_clase_invatare.winfo_children():
@@ -2194,15 +2268,26 @@ class TrainWindow(customtkinter.CTkToplevel):
         for widget in self.scroll_modele_invatare.winfo_children():
             widget.destroy()
 
-        modele_disponibile = ["Model YOLO neantrenat"]
+        # --- MODIFICARE 2: Verificăm dacă există modele în mapa 'models' ---
+        fisiere_modele = []
         if os.path.exists(self.MAPA_MODELE):
             fisiere_modele = [
                 f for f in os.listdir(self.MAPA_MODELE) if f.endswith(".pt")
             ]
-            modele_disponibile.extend(fisiere_modele)
+
+        modele_disponibile = []
+        if fisiere_modele:
+            # Dacă există cel puțin un model salvat în 'models', adăugăm opțiunile
+            modele_disponibile = ["Model YOLO neantrenat"] + fisiere_modele
+        else:
+            # Dacă NU există niciun model în mapa 'models', lista rămâne goală (nu se afișează modelul neantrenat)
+            modele_disponibile = []
 
         if self.var_model_selectat.get() not in modele_disponibile:
-            self.var_model_selectat.set(modele_disponibile[0])
+            if modele_disponibile:
+                self.var_model_selectat.set(modele_disponibile[0])
+            else:
+                self.var_model_selectat.set("")
 
         for nume_model in modele_disponibile:
             radio_model = customtkinter.CTkRadioButton(

@@ -42,6 +42,7 @@ class MainApp(customtkinter.CTk):
         self.confidence_threshold = 0.50
         self.latest_screen_img = None
         self.latest_camera_img = None
+        self.is_camera_available = False
 
         self.COLOR_DEFAULT_BORDER = "gray20"
         self.COLOR_SELECTED_BORDER = "#D3D3D3"
@@ -348,7 +349,13 @@ class MainApp(customtkinter.CTk):
         if mode == "camera":
             self.card_camera.configure(border_color=self.COLOR_SELECTED_BORDER)
             self.card_screen.configure(border_color=self.COLOR_DEFAULT_BORDER)
-            self.btn_start.configure(state="normal", text="Start Detecție Camera")
+            
+            # VERIFICARE: Activăm butonul DOAR dacă camera este disponibilă
+            if self.is_camera_available:
+                self.btn_start.configure(state="normal", text="Start Detecție Camera")
+            else:
+                self.btn_start.configure(state="disabled", text="Cameră indisponibilă")
+
         elif mode == "screen":
             self.card_screen.configure(border_color=self.COLOR_SELECTED_BORDER)
             self.card_camera.configure(border_color=self.COLOR_DEFAULT_BORDER)
@@ -377,6 +384,21 @@ class MainApp(customtkinter.CTk):
 
             cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
             
+            # Verificăm dacă camera s-a deschis cu succes
+            if not cap.isOpened():
+                self.is_camera_available = False
+                self.cam_preview_label.configure(text="Camera nu a fost găsită / deconectată")
+                
+                # Dacă era selectată camera, dezactivăm butonul de start
+                if self.selected_mode == "camera":
+                    self.btn_start.configure(state="disabled", text="Cameră indisponibilă")
+                
+                cap.release()
+                time.sleep(1.0) # Așteptăm mai mult înainte de reîncercare
+                continue
+
+            self.is_camera_available = True
+
             while self.is_running and not self.pause_camera_preview:
                 ret, frame = cap.read()
                 if ret:
@@ -391,6 +413,11 @@ class MainApp(customtkinter.CTk):
                         dark_image=resized_img,
                         size=(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT),
                     )
+                else:
+                    # Dacă citirea cadrelor eșuează brusc
+                    self.is_camera_available = False
+                    break
+
                 time.sleep(0.033)
 
             cap.release()
@@ -407,6 +434,12 @@ class MainApp(customtkinter.CTk):
 
         self.is_detecting = True
 
+        # --- MODIFICAREA AICI ---
+        # Minimizează fereastra principală în taskbar pentru a nu încurca
+        self.iconify() 
+        # (Opțional: Dacă vrei să devină invizibilă de tot, poți înlocui cu self.withdraw() )
+        # ------------------------
+
         if self.selected_mode == "camera":
             self.pause_camera_preview = True
             time.sleep(0.5)
@@ -422,6 +455,12 @@ class MainApp(customtkinter.CTk):
         def on_detection_finish():
             self.is_detecting = False
             self.pause_camera_preview = False
+            
+            # --- MODIFICAREA AICI ---
+            # Când detecția s-a terminat, readucem fereastra pe ecran
+            self.deiconify() 
+            # ------------------------
+            
             print("[INFO] Sesiunea de detecție s-a încheiat.")
 
         def start_thread():
