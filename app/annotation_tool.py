@@ -19,7 +19,6 @@ class SnippingAnnotator:
         self.img_dir = os.path.join(self.output_dir, "images")
         self.lbl_dir = os.path.join(self.output_dir, "labels")
 
-        # Asigurăm existența folderului 'all' și a directoarelor de bază
         self.all_img_dir = os.path.join(self.img_dir, "all")
         os.makedirs(self.all_img_dir, exist_ok=True)
         os.makedirs(self.lbl_dir, exist_ok=True)
@@ -36,7 +35,6 @@ class SnippingAnnotator:
         self.current_image_path = None
         self.current_class_folder = None
 
-        # Variabilă pentru a ține minte ultima clasă folosită
         self.last_used_class = "nothing"
         self.class_has_changed = False
 
@@ -66,13 +64,9 @@ class SnippingAnnotator:
                     f.write(f"{c}\n")
 
     def start_background_listener(self):
-        print(
-            f"[INFO] Modul Snipping activat. Apasă {self.hotkey.upper()} pentru a captura ecranul."
-        )
         keyboard.add_hotkey(self.hotkey, self._declanseaza_din_thread_sigur)
 
     def _declanseaza_din_thread_sigur(self):
-        """Redirecționăm executarea către thread-ul principal Tkinter în mod sigur."""
         target = self.parent_app if self.parent_app else self.root
         if target:
             target.after(0, self._verifica_si_porneste_captura)
@@ -80,7 +74,6 @@ class SnippingAnnotator:
             self._verifica_si_porneste_captura()
 
     def _verifica_si_porneste_captura(self):
-        # PROTECȚIE: Dacă fereastra este deja deschisă, ignorăm
         if self.root is not None and self.root.winfo_exists():
             return
         self._porneste_procedura_captura()
@@ -125,11 +118,9 @@ class SnippingAnnotator:
             print(f"[Eroare Captură]: {e}")
             if self.parent_app:
                 self.parent_app.after(0, self._reporneste_fluxul_principal)
-
     def _deschide_interfata_cu_imagine(
         self, original_img, image_path, default_class
     ):
-        # Asigurăm conversia în RGB pentru a evita erorile la salvarea JPEG
         self.original_img = original_img.convert("RGB")
         self.current_image_path = image_path
         self.current_class_folder = default_class
@@ -152,7 +143,6 @@ class SnippingAnnotator:
                     original_img, image_path, default_class
                 )
         except Exception as e:
-            print(f"[Eroare Deschidere UI Adnotare]: {e}")
             self._reporneste_fluxul_principal()
 
     def carca_adnotare_existenta(self, image_path, class_name):
@@ -239,9 +229,6 @@ class SnippingAnnotator:
         )
         self.top_panel.place(relx=0.5, y=30, anchor="n")
 
-        # ----------------------------------------------------------------------
-        # WIDGET-URI PANOU
-        # ----------------------------------------------------------------------
         ctk.CTkLabel(
             self.top_panel,
             text="Clasă:",
@@ -271,7 +258,6 @@ class SnippingAnnotator:
             self.last_used_class = alegere
             self.canvas.focus_set()
 
-        # AICI AM MODIFICAT CULORILE PENTRU COMBOBOX (TEMA DISCORD)
         self.combo = ctk.CTkComboBox(
             self.top_panel,
             variable=self.class_var,
@@ -305,7 +291,6 @@ class SnippingAnnotator:
             text_color="#8a8a93",
         ).pack(side="left", padx=20)
 
-        # SIMBOL DRAG & DROP
         self.drag_handle = ctk.CTkLabel(
             self.top_panel,
             text="✥",
@@ -315,10 +300,6 @@ class SnippingAnnotator:
             width=20
         )
         self.drag_handle.pack(side="right", padx=(5, 15))
-
-        # ----------------------------------------------------------------------
-        # LOGICĂ DRAG & DROP FĂRĂ SĂRITURI
-        # ----------------------------------------------------------------------
         def on_drag_start(event):
             self.top_panel._panel_start_x = self.top_panel.winfo_x()
             self.top_panel._panel_start_y = self.top_panel.winfo_y()
@@ -331,15 +312,12 @@ class SnippingAnnotator:
             new_x = self.top_panel._panel_start_x + dx
             new_y = self.top_panel._panel_start_y + dy
 
-            # Setează direct în coordonate absolute fixe
             self.top_panel.place(relx=0, rely=0, x=new_x, y=new_y, anchor="nw")
 
         self.drag_handle.bind("<ButtonPress-1>", on_drag_start)
         self.drag_handle.bind("<B1-Motion>", on_drag_motion)
 
-        # ----------------------------------------------------------------------
-        # BINDING-URI EVENIMENTE
-        # ----------------------------------------------------------------------
+
         self.canvas.bind("<Button-1>", self.on_left_click)
         self.canvas.bind("<ButtonPress-3>", self.on_right_press)
         self.canvas.bind("<B3-Motion>", self.on_right_drag)
@@ -381,19 +359,16 @@ class SnippingAnnotator:
     def on_left_click(self, event):
         self.canvas.focus_set()
 
-        # Coordonatele click-ului raportate la root
         canvas_x = self.canvas.winfo_x()
         canvas_y = self.canvas.winfo_y()
         root_click_x = event.x + canvas_x
         root_click_y = event.y + canvas_y
 
-        # Limitele dinamice ale panoului de sus
         px1 = self.top_panel.winfo_x()
         py1 = self.top_panel.winfo_y()
         px2 = px1 + self.top_panel.winfo_width()
         py2 = py1 + self.top_panel.winfo_height()
 
-        # Dacă s-a făcut click peste panoul de control, ignorăm punctul
         if px1 <= root_click_x <= px2 and py1 <= root_click_y <= py2:
             return
 
@@ -436,7 +411,7 @@ class SnippingAnnotator:
                     p1[1],
                     p2[0],
                     p2[1],
-                    fill="#5865F2", # AICI AM MODIFICAT CULOAREA LINIEI (TEMA DISCORD)
+                    fill="#5865F2", 
                     width=2,
                     tags="annotation",
                 )
@@ -447,7 +422,7 @@ class SnippingAnnotator:
                     p1[1],
                     p2[0],
                     p2[1],
-                    fill="#5865F2", # AICI AM MODIFICAT CULOAREA LINIEI PUNCTATE (TEMA DISCORD)
+                    fill="#5865F2", 
                     width=2,
                     dash=(5, 5),
                     tags="annotation",
@@ -460,7 +435,7 @@ class SnippingAnnotator:
                 y - r,
                 x + r,
                 y + r,
-                fill="#5865F2", # AICI AM MODIFICAT CULOAREA PUNCTELOR (TEMA DISCORD)
+                fill="#5865F2", 
                 outline="white",
                 width=1.5,
                 tags="annotation",
@@ -583,7 +558,6 @@ class SnippingAnnotator:
 
         target_img_path = os.path.join(class_img_dir, base_filename + ".jpg")
 
-        # Salvare sigură RGB
         self.original_img.convert("RGB").save(target_img_path, quality=95)
 
         if self.current_image_path and os.path.abspath(

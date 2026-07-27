@@ -5,7 +5,6 @@ import mss
 import numpy as np
 from ultralytics import YOLO
 
-# Constanta Windows API pentru ascunderea ferestrei din capturi de ecran
 WDA_EXCLUDEFROMCAPTURE = 0x00000011
 
 
@@ -17,13 +16,11 @@ class ObjectDetector:
         conf_threshold=0.5,
         app_reference=None,
     ):
-        # Încarcă direct fișierul .pt aflat la calea specificată
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
-        self.app_reference = app_reference  # Referința către instanța MainApp
+        self.app_reference = app_reference  
 
     def process_frame(self, frame):
-        # Citim valoarea din slider în timp real dacă referința aplicației există
         current_conf = self.conf_threshold
         if self.app_reference is not None:
             current_conf = self.app_reference.confidence_threshold
@@ -45,7 +42,7 @@ class ObjectDetector:
         """Oprește preview-ul camerei din aplicația principală și eliberează resursa video."""
         if self.app_reference and hasattr(self.app_reference, 'pause_camera_preview'):
             self.app_reference.pause_camera_preview = True
-            time.sleep(0.3)  # Oferă timp worker-ului să execute cap.release()
+            time.sleep(0.3) 
 
     def _start_main_camera(self):
         """Repornește preview-ul camerei în aplicația principală."""
@@ -69,23 +66,18 @@ class ObjectDetector:
         h, w, _ = frame.shape
         
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 1.0  # Font mai mare
+        font_scale = 1.0 
         thickness = 2
-        
-        # Calculăm dimensiunile textului
         text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
-        
-        # Blocul roșu va fi doar puțin mai mare decât textul
+
         box_w = text_size[0] + 40
         box_h = text_size[1] + 30
-        
-        # Poziționăm în partea de SUS (ex: la 30 pixeli de marginea superioară)
+
         x1 = (w - box_w) // 2
         y1 = 30
         x2 = x1 + box_w
         y2 = y1 + box_h
 
-        # Creăm o mască semi-transparentă
         overlay = frame.copy()
         cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 180), -1)  # Fundal roșu
         cv2.rectangle(overlay, (x1, y1), (x2, y2), (255, 255, 255), 2)  # Contur alb
@@ -93,7 +85,6 @@ class ObjectDetector:
         alpha = 0.85
         cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
 
-        # Adăugăm textul perfect centrat în interiorul blocului
         text_x = x1 + (box_w - text_size[0]) // 2
         text_y = y1 + (box_h + text_size[1]) // 2
 
@@ -111,17 +102,15 @@ class ObjectDetector:
 
     def start_camera_detection(self, on_finish=None):
         time.sleep(0.2)
-        
-        # Ascundem interfața principală
+
         self._hide_main_app()
-        # Oprim camera din aplicația principală (pentru a evita conflictele de resurse video)
+
         self._stop_main_camera()
 
         WINDOW_TITLE = (
             "Vision Detection - Live Camera (Pentru a inchide apasati 'q')"
         )
 
-        # Dimensiuni de 3 ori mai mari decât standardul (640x480 -> 1920x1440)
         current_w, current_h = 1280, 720
 
         cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
@@ -139,7 +128,6 @@ class ObjectDetector:
 
                 annotated_frame = self.process_frame(frame)
 
-                # Afișează popup-ul dacă utilizatorul a încercat să apese X
                 if time.time() < popup_end_time:
                     annotated_frame = self._draw_popup(annotated_frame)
 
@@ -149,7 +137,6 @@ class ObjectDetector:
                 if key == ord("q"):
                     break
 
-                # Preluăm dimensiunile actuale ale ferestrei doar dacă este vizibilă
                 if cv2.getWindowProperty(WINDOW_TITLE, cv2.WND_PROP_VISIBLE) >= 1:
                     try:
                         rect = cv2.getWindowImageRect(WINDOW_TITLE)
@@ -158,10 +145,9 @@ class ObjectDetector:
                     except:
                         pass
                 else:
-                    # Dacă fereastra nu mai este vizibilă (s-a apăsat X)
-                    popup_end_time = time.time() + 1.0  # Pop-up activ 1 secundă
-                    
-                    # Restabilim fereastra păstrând ULTIMELE dimensiuni
+
+                    popup_end_time = time.time() + 1.0  
+
                     cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
                     cv2.setWindowProperty(
                         WINDOW_TITLE, cv2.WND_PROP_TOPMOST, 1
@@ -170,8 +156,7 @@ class ObjectDetector:
         finally:
             cap.release()
             cv2.destroyWindow(WINDOW_TITLE)
-            
-            # Reafișăm aplicația principală și repornim camera UI-ului
+
             self._show_main_app()
             self._start_main_camera()
             
@@ -179,16 +164,15 @@ class ObjectDetector:
                 on_finish()
 
     def start_screen_detection(self, on_finish=None):
-        # Ascundem interfața principală
+
         self._hide_main_app()
-        # Oprim explicit camera hardware (dacă era pornită de interfața principală în background)
+
         self._stop_main_camera()
 
         WINDOW_TITLE = (
             "Vision Detection - Ghost Window (Pentru a inchide apasati 'q')"
         )
 
-        # Dimensiuni de 3 ori mai mari (480x270 -> 1440x810)
         current_w, current_h = 1440, 810
 
         cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
@@ -200,7 +184,7 @@ class ObjectDetector:
         popup_end_time = 0
 
         with mss.mss() as sct:
-            monitor = sct.monitors[1]  # Captează TOT ecranul
+            monitor = sct.monitors[1]  
 
             try:
                 while True:
@@ -210,7 +194,6 @@ class ObjectDetector:
 
                     annotated_frame = self.process_frame(frame)
 
-                    # Afișează popup-ul dacă utilizatorul a încercat să apese X
                     if time.time() < popup_end_time:
                         annotated_frame = self._draw_popup(annotated_frame)
 
@@ -220,7 +203,6 @@ class ObjectDetector:
                     if key == ord("q"):
                         break
 
-                    # Preluăm dimensiunile actuale ale ferestrei doar dacă este vizibilă
                     if cv2.getWindowProperty(WINDOW_TITLE, cv2.WND_PROP_VISIBLE) >= 1:
                         try:
                             rect = cv2.getWindowImageRect(WINDOW_TITLE)
@@ -229,12 +211,10 @@ class ObjectDetector:
                         except:
                             pass
                     else:
-                        # Dacă fereastra nu mai este vizibilă (s-a apăsat X)
                         popup_end_time = (
                             time.time() + 1.0
-                        )  # Pop-up activ 1 secundă
-                        
-                        # Restabilim fereastra păstrând ULTIMELE dimensiuni și re-aplicăm proprietatea Ghost
+                        ) 
+
                         cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
                         cv2.setWindowProperty(
                             WINDOW_TITLE, cv2.WND_PROP_TOPMOST, 1
@@ -243,8 +223,6 @@ class ObjectDetector:
                         self._apply_ghost_affinity(WINDOW_TITLE)
             finally:
                 cv2.destroyWindow(WINDOW_TITLE)
-                
-                # Reafișăm aplicația principală și repornim camera UI-ului
                 self._show_main_app()
                 self._start_main_camera()
                 

@@ -11,11 +11,10 @@ from PIL import Image
 class RealtimeCaptureWindow(customtkinter.CTkToplevel):
     def __init__(self, parent, base_dir=None, callback_refresh=None):
         super().__init__(parent)
-        
         self.parent = parent
         self.parent.withdraw()
 
-        self.title("Captură & Adnotare Poligoane în Timp Real")
+        self.title("RealtimeCapture")
         
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
@@ -38,10 +37,9 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.class_name = ""
         self.cap = None
         self.is_running = False
-        self._is_closing = False  # FLAG NOU pentru a preveni crash-ul la inchidere
+        self._is_closing = False 
         self.current_class_count = 0  
-        
-        # Stări desenare
+
         self.paused = False
         self.current_frame = None
         self.points = []
@@ -49,7 +47,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.selected_point_idx = None
         self.is_dragging = False
 
-        # Stări tracker
         self.tracker = None
         self.current_bbox = None
         self.initial_bbox = None
@@ -64,15 +61,12 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.captures_per_phase = []
         self.target_auto_captures_per_angle = 0 
         self.last_auto_save_time = 0
-        
-        # FIȘIERE SALVATE ÎN ETAPA CURENTĂ
+
         self.current_phase_files = []
-        
-        # Stari animatie rotire
+
         self.showing_turn_guide = False
         self.turn_guide_start_time = 0
 
-        # Pentru miscarea meniului (drag & drop) global coord.
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._start_panel_x = 0
@@ -84,25 +78,20 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.start_camera()
 
     def get_tracker(self):
-        # 1. Încearcă KCF
         if hasattr(cv2, 'TrackerKCF_create'):
             return cv2.TrackerKCF_create()
         elif hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'TrackerKCF_create'):
             return cv2.legacy.TrackerKCF_create()
         
-        # 2. Încearcă CSRT
         if hasattr(cv2, 'TrackerCSRT_create'):
             return cv2.TrackerCSRT_create()
         elif hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'TrackerCSRT_create'):
             return cv2.legacy.TrackerCSRT_create()
-
-        # 3. Încearcă MIL
+        
         if hasattr(cv2, 'TrackerMIL_create'):
             return cv2.TrackerMIL_create()
         elif hasattr(cv2, 'legacy') and hasattr(cv2.legacy, 'TrackerMIL_create'):
             return cv2.legacy.TrackerMIL_create()
-
-        print("Avertisment: Niciun tracker compatibil nu este disponibil.")
         return None
 
     def load_classes(self):
@@ -229,7 +218,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
 
     def confirma_clasa(self):
         selectata = self.combo_class.get().strip()
-        
         if selectata and selectata != "":
             self.class_name = selectata.replace(" ", "_")
             if self.class_name not in self.classes:
@@ -282,7 +270,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         threading.Thread(target=self._init_camera_bg, daemon=True).start()
 
     def _init_camera_bg(self):
-        # Folosim DSHOW pe Windows din prima pentru a evita eroarea MSMF cap_msmf.cpp
         if platform.system() == "Windows":
             cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         else:
@@ -291,12 +278,10 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         if not self._is_closing:
             self.after(0, self._camera_ready, cap)
         else:
-            # Dacă utilizatorul a închis deja fereastra
             if cap is not None:
                 cap.release()
 
     def _camera_ready(self, cap):
-        # Dacă fereastra a fost închisă între timp
         if self._is_closing:
             if cap is not None:
                 cap.release()
@@ -331,7 +316,6 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.btn_restart_phase.pack_forget()
 
     def update_webcam(self):
-        # Oprim procesarea dacă se închide fereastra
         if self._is_closing or not self.is_running or self.cap is None:
             return
 
@@ -578,12 +562,8 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
         self.after(2000, self.on_close)
 
     def on_close(self):
-        # Setăm flag-ul care previne update_webcam să mai citească de pe cameră
         self._is_closing = True
         self.is_running = False 
-        
-        # Așteptăm 100ms ca orice "cap.read()" rămas în execuție să se termine
-        # Asta previne eroarea de MSMF (Media Foundation)
         self.after(100, self._perform_close_cleanup)
 
     def _perform_close_cleanup(self):
@@ -595,18 +575,15 @@ class RealtimeCaptureWindow(customtkinter.CTkToplevel):
             
         cv2.destroyAllWindows()
 
-        # 2. Apelează callback-ul dacă există
         if self.callback_refresh:
             self.callback_refresh()
-            
-        # 3. Afișează fereastra părinte
         try:
             if getattr(self, "parent", None) and self.parent.winfo_exists():
                 self.parent.deiconify()
         except Exception:
             pass
 
-        # 4. Închide fereastra curentă
+
         self.destroy()
 
 if __name__ == "__main__":
@@ -622,7 +599,6 @@ if __name__ == "__main__":
     
     def on_app_exit():
         try:
-            # Folosim quit() in loc de destroy() in callback pentru o inchidere curata a mainloop-ului
             root.quit()
         except Exception:
             pass

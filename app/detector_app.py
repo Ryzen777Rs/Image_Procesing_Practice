@@ -8,13 +8,9 @@ import mss
 from PIL import Image
 import tkinter as tk
 from launch_detector import ObjectDetector
-
-# IMPORTĂM CLASA DIN PRIMUL FIȘIER
 from trainer_app import TrainWindow
-
 customtkinter.set_appearance_mode("dark")
 customtkinter.set_default_color_theme("dark-blue")
-
 
 class MainApp(customtkinter.CTk):
 
@@ -37,7 +33,7 @@ class MainApp(customtkinter.CTk):
         self.is_running = True
         self.selected_mode = None
         
-        # Preluăm primul model disponibil, dacă există
+        
         self.selected_model = self.get_first_available_model()
         self.confidence_threshold = 0.50
         self.latest_screen_img = None
@@ -50,15 +46,13 @@ class MainApp(customtkinter.CTk):
         self.PREVIEW_WIDTH = 530
         self.PREVIEW_HEIGHT = 298
 
-        # CONTAINERUL PRINCIPAL 
+         
         self.main_frame = customtkinter.CTkFrame(master=self, corner_radius=15)
         self.main_frame.pack(pady=20, padx=20, fill="both", expand=True)
 
-        # Zona de jos
         self.bottom_frame = customtkinter.CTkFrame(master=self.main_frame, fg_color="transparent")
         self.bottom_frame.pack(side="bottom", fill="x", padx=30, pady=(10, 20))
 
-        # SLIDER
         self.slider_frame = customtkinter.CTkFrame(master=self.bottom_frame, fg_color="transparent")
         self.slider_frame.pack(side="top", fill="x", pady=(0, 50))
 
@@ -83,11 +77,9 @@ class MainApp(customtkinter.CTk):
         self.confidence_slider.set(self.confidence_threshold)
         self.confidence_slider.pack(side="top")
 
-        # Butoanele de jos
         self.buttons_row_frame = customtkinter.CTkFrame(master=self.bottom_frame, fg_color="transparent")
         self.buttons_row_frame.pack(side="top", fill="x")
 
-        # CONFIGURARE BUTON MODEL
         has_model = self.selected_model is not None
         display_name = self.selected_model.replace(".pt", "").upper() if has_model else "INDISPONIBIL"
         
@@ -104,7 +96,6 @@ class MainApp(customtkinter.CTk):
         )
         self.model_btn.pack(side="left")
 
-        # BUTON PENTRU DESCĂRCARE MODELE YOLO (N, M, L)
         self.btn_install_models = customtkinter.CTkButton(
             master=self.buttons_row_frame,
             text="Install Yolo models",
@@ -116,7 +107,6 @@ class MainApp(customtkinter.CTk):
             command=self.start_download_models,
         )
 
-        # Afișăm butonul doar dacă NICIUNUL din modelele n, m, l nu există
         if not self.check_standard_models_exist():
             self.btn_install_models.pack(side="left", padx=(10, 0))
 
@@ -133,7 +123,6 @@ class MainApp(customtkinter.CTk):
         )
         self.btn_start.pack(side="right")
 
-        # Zona de sus
         self.top_bar_frame = customtkinter.CTkFrame(master=self.main_frame, fg_color="transparent")
         self.top_bar_frame.pack(side="top", fill="x", padx=20, pady=(15, 5))
 
@@ -172,14 +161,12 @@ class MainApp(customtkinter.CTk):
         )
         self.create_btn.pack(side="right", padx=10)
 
-        # Carduri de selecție
         self.cards_frame = customtkinter.CTkFrame(master=self.main_frame, fg_color="transparent")
         self.cards_frame.pack(side="top", fill="both", expand=True, padx=20, pady=10)
 
         self.cards_frame.columnconfigure(0, weight=1)
         self.cards_frame.columnconfigure(1, weight=1)
 
-        # CAMERA WEB
         self.card_camera = customtkinter.CTkFrame(
             master=self.cards_frame,
             corner_radius=12,
@@ -201,7 +188,6 @@ class MainApp(customtkinter.CTk):
         )
         self.cam_preview_label.pack(pady=(0, 8), padx=8)
 
-        # ECRAN 
         self.card_screen = customtkinter.CTkFrame(
             master=self.cards_frame,
             corner_radius=12,
@@ -223,7 +209,6 @@ class MainApp(customtkinter.CTk):
         )
         self.screen_preview_label.pack(pady=(0, 8), padx=8)
 
-        # Event Binds
         self.card_camera.bind("<Button-1>", lambda e: self.select_mode("camera"))
         self.cam_preview_label.bind("<Button-1>", lambda e: self.select_mode("camera"))
         self.cam_title.bind("<Button-1>", lambda e: self.select_mode("camera"))
@@ -231,7 +216,6 @@ class MainApp(customtkinter.CTk):
         self.screen_preview_label.bind("<Button-1>", lambda e: self.select_mode("screen"))
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # Threads
         self.screen_thread = threading.Thread(target=self._screen_capture_worker, daemon=True)
         self.screen_thread.start()
 
@@ -265,7 +249,6 @@ class MainApp(customtkinter.CTk):
                 except Exception as e:
                     print(f"[WARN] Nu s-a putut descarca {model_file}: {e}")
 
-        # Programăm actualizarea interfeței pe firul principal
         self.after(0, self._on_download_complete)
 
     def _on_download_complete(self):
@@ -274,7 +257,6 @@ class MainApp(customtkinter.CTk):
         self.selected_model = self.get_first_available_model()
         if self.selected_model:
             display_name = self.selected_model.replace(".pt", "").upper()
-            # Reactivăm butonul și îi redăm culoarea
             self.model_btn.configure(
                 text=display_name,
                 state="normal",
@@ -303,7 +285,7 @@ class MainApp(customtkinter.CTk):
             pt_files = [f for f in os.listdir(self.MODELS_DIR) if f.endswith(".pt")]
 
         if not pt_files:
-            return # Dacă e gol, ieșim oricum pentru siguranță
+            return 
 
         for model_file in pt_files:
             def select(m=model_file):
@@ -349,8 +331,6 @@ class MainApp(customtkinter.CTk):
         if mode == "camera":
             self.card_camera.configure(border_color=self.COLOR_SELECTED_BORDER)
             self.card_screen.configure(border_color=self.COLOR_DEFAULT_BORDER)
-            
-            # VERIFICARE: Activăm butonul DOAR dacă camera este disponibilă
             if self.is_camera_available:
                 self.btn_start.configure(state="normal", text="Start Detecție Camera")
             else:
@@ -383,18 +363,16 @@ class MainApp(customtkinter.CTk):
                 continue
 
             cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-            
-            # Verificăm dacă camera s-a deschis cu succes
+
             if not cap.isOpened():
                 self.is_camera_available = False
                 self.cam_preview_label.configure(text="Camera nu a fost găsită / deconectată")
-                
-                # Dacă era selectată camera, dezactivăm butonul de start
+
                 if self.selected_mode == "camera":
                     self.btn_start.configure(state="disabled", text="Cameră indisponibilă")
                 
                 cap.release()
-                time.sleep(1.0) # Așteptăm mai mult înainte de reîncercare
+                time.sleep(1.0) 
                 continue
 
             self.is_camera_available = True
@@ -414,7 +392,6 @@ class MainApp(customtkinter.CTk):
                         size=(self.PREVIEW_WIDTH, self.PREVIEW_HEIGHT),
                     )
                 else:
-                    # Dacă citirea cadrelor eșuează brusc
                     self.is_camera_available = False
                     break
 
@@ -434,11 +411,6 @@ class MainApp(customtkinter.CTk):
 
         self.is_detecting = True
 
-        # --- MODIFICAREA AICI ---
-        # Minimizează fereastra principală în taskbar pentru a nu încurca
-        self.iconify() 
-        # (Opțional: Dacă vrei să devină invizibilă de tot, poți înlocui cu self.withdraw() )
-        # ------------------------
 
         if self.selected_mode == "camera":
             self.pause_camera_preview = True
@@ -455,13 +427,6 @@ class MainApp(customtkinter.CTk):
         def on_detection_finish():
             self.is_detecting = False
             self.pause_camera_preview = False
-            
-            # --- MODIFICAREA AICI ---
-            # Când detecția s-a terminat, readucem fereastra pe ecran
-            self.deiconify() 
-            # ------------------------
-            
-            print("[INFO] Sesiunea de detecție s-a încheiat.")
 
         def start_thread():
             if self.selected_mode == "camera":
