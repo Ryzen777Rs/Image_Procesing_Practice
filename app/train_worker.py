@@ -15,9 +15,16 @@ def check_device():
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Worker  YOLO"
-    )
+    # 1. Redirecționarea output-ului către fișierul din folderul părinte
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(script_dir)
+    log_path = os.path.join(parent_dir, "antrenare_log.txt")
+
+    log_file = open(log_path, "a", encoding="utf-8")
+    sys.stdout = log_file
+    sys.stderr = log_file
+
+    parser = argparse.ArgumentParser(description="Worker YOLO")
     parser.add_argument(
         "--data",
         type=str,
@@ -99,10 +106,12 @@ def main():
 
         sys.stdout.flush()
 
-    except ImportError:
+    except ImportError as e:
+        print(f"STATUS:ERROR|ImportError: {e}")
         sys.stdout.flush()
         sys.exit(1)
     except Exception as e:
+        print(f"STATUS:ERROR|Exception: {e}")
         sys.stdout.flush()
         sys.exit(1)
 
