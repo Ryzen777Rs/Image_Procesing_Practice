@@ -1,35 +1,15 @@
 # Image_Procesing_Practice
 
-<!-- PROJECT SHIELDS -->
-<!-- Aceste insigne necesită link-ul de la repository-ul vostru pentru a funcționa corect -->
-[![Contributors][contributors-shield]][contributors-url]
 
 <br />
 <div align="center">
   <!-- Înlocuiți calea de mai jos cu logo-ul real al proiectului vostru -->
-    <img src="app/logos/soldierboy.jpeg" alt="Logo" width="670" height="670">
+    <img src="app/logos/night.gif" alt="Logo" width="670" height="670">
   </a>
 
-  <h3 align="center">Detectarea Obiectelor și Antrenarea Modelelor (Sigma)</h3>
+  <h3 align="center">Detectarea Obiectelor și Antrenarea Modelelor</h3>
 </div>
 
-<!-- TABLE OF CONTENTS -->
-<details>
-  <summary>Cuprins</summary>
-  <ol>
-    <li>
-      <a href="#-despre-proiect">Despre Proiect</a>
-      <ul>
-        <li><a href="#-tehnologii-utilizate">Tehnologii Utilizate</a></li>
-      </ul>
-    </li>
-    <li>
-      <a href="#-instrucțiuni-de-instalare-și-rulare">Instrucțiuni de Instalare</a>
-    </li>
-    <li><a href="#-arhitectura-și-funcționalitățile-programului">Utilizare și Funcționalități</a></li>
-    <li><a href="#-contribuitori">Contribuitori</a></li>
-  </ol>
-</details>
 
 ## 🚀 Despre Proiect
 
@@ -47,9 +27,7 @@ Acest proiect reprezintă o soluție software integrată, dezvoltată în Python
 Pentru a asigura o experiență de utilizare fluidă, procesul de instalare a fost automatizat.
 
 1. **Pregătirea mediului:** Nu este necesară instalarea manuală a limbajului Python. Pachetul include un script de configurare care va instala automat versiunea Python 3.12.17 și dependențele necesare.
-2. **Lansarea aplicației:** Navigați în folderul principal al proiectului.
-3. **Execuția:** Rulați fișierul `Start.bat`. Procesul de inițializare poate dura câteva momente, după care se va deschide fereastra principală a programului.
-
+2. **Lansarea aplicației:** Navigați în folderul principal al proiectului și rulați fișierul `Start.bat`. Procesul de inițializare poate dura câteva momente, după care se va deschide fereastra principală a programului.
 ---
 
 ## 🎯 Arhitectura și Funcționalitățile Programului
@@ -63,7 +41,7 @@ Aceasta este fereastra principală a aplicației, dedicată identificării obiec
 * **⚙️ Pragul de încredere (Confidence):** Permite ajustarea nivelului de precizie. O valoare mai mare va forța modelul să afișeze doar detecțiile de care este foarte sigur.
 * **🧠 Gestionarea Modelelor YOLO:** 
   * Interfața include butonul **Install YOLO Models**.
-  * Permite descărcarea și comutarea între variantele **YOLOv8n** (rapid), **YOLOv8m** (echilibrat) și **YOLOv8l** (precis).
+  * Toodată, butonul din colț stânga este responsabil de alegerea modelului curent
 * **🎨 Personalizare:** Buton dedicat în colțul din stânga-sus pentru schimbarea temei aplicației.
 * **🚀 Tranziția:** Accesarea butonului **Antrenează** va deschide o fereastră nouă pentru modelare avansată.
 
@@ -74,7 +52,7 @@ Acest modul avansat este divizat în trei secțiuni principale: Galerie, Învă�
 * **Import:** Imaginile pot fi adăugate din fișierele locale sau importate direct de pe internet.
 * **Sistem de Adnotare:** Utilizatorii pot adnota manual imaginile salvate, atribuindu-le clase specifice.
 * **Snipping Tool:** Prin scurtătura `Ctrl+Shift+S`, utilizatorul poate decupa o porțiune de pe ecran care va fi salvată automat în Galerie pentru adnotare.
-* **QoL:** Opțiuni rapide în colțul din dreapta-jos: **Ștergere Multiplă** și **Delete All**.
+
 
 #### ⚙️ Învățare (Configurarea Antrenamentului)
 Interfața este organizată în trei coloane logice:
@@ -93,10 +71,9 @@ Acest proiect a fost realizat cu efortul comun al următoarei echipe:
 
 | Rol | Nume |
 | :--- | :--- |
-| **👑 Lider de Proiect** | Gudîma Liviu |
-| **👨‍💻 Bucătar (Dezvoltator)** | Șilo Alexandr |
-| **🤖 Asistent AI (Ajutor nr. 1)** | Gemini |
-| **🎨 Master HTML a.k.a Designer** | Dancu Nicolae |
+| **👨‍💻 Dezvoltator** | Gudîma Liviu |
+| **👨‍💻 Dezvoltator** | Șilo Alexandr |
+
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- Acestea sunt variabilele folosite pentru insigne. Înlocuiți "nume-utilizator/nume-repo" cu datele voastre reale de GitHub. -->

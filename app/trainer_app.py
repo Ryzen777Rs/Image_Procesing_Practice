@@ -15,7 +15,6 @@ import winreg
 import subprocess
 import customtkinter
 from PIL import Image, ImageDraw, ImageFilter, ImageGrab, UnidentifiedImageError
-
 from realtime_detector import RealtimeCaptureWindow
 
 try:
@@ -36,15 +35,13 @@ except ImportError:
 from annotation_tool import SnippingAnnotator
 
 
-def detecteaza_hardware_sistem():
-    """Detectează procesorul (CPU) și placa video 100% nativ din Registrii Windows, inclusiv generația GPU și suportul AMD ROCm."""
-    
+def hardware_detection():    
     sys_gpu_nume = ""
     gpu_nume = "GPU Nedetectat"
     gpu_suportat = False
     device_code = "cpu"
 
-    # --- 1. DETECȚIE CPU DIN REGISTRI ---
+
     def obtine_cpu_scurt():
         if platform.system() == "Windows":
             try:
@@ -64,7 +61,6 @@ def detecteaza_hardware_sistem():
                 return platform.processor() or "CPU Generic"
         return platform.processor() or "CPU Generic"
 
-    # --- 2. DETECȚIE GPU DIN REGISTRI ---
     def obtine_gpu_din_registri():
         gpu_list = []
         if platform.system() == "Windows":
@@ -95,7 +91,6 @@ def detecteaza_hardware_sistem():
     total_threads = os.cpu_count() or 4
     sys_gpu_nume = obtine_gpu_din_registri()
 
-    # --- 3. VERIFICARE SUPORT GPU (CUDA / ROCm) ---
     try:
         if CUDA_DISPONIBIL and torch.cuda.is_available():
             try:
@@ -132,7 +127,6 @@ def detecteaza_hardware_sistem():
     except Exception:
         pass 
         
-    # --- 4. FORMATĂRI FINALE ---
     if sys_gpu_nume:
         sys_gpu_nume = re.sub(r'\(R\)|\(TM\)|\(tm\)', '', sys_gpu_nume).strip()
         sys_gpu_nume = ' '.join(sys_gpu_nume.split())
@@ -157,9 +151,6 @@ def colecteaza_date_antrenare(
     perechi_gasite = []
     numar_imagini_totale = 0
 
-    if not images_dir.exists() or not labels_dir.exists():
-        print(f"❌ Folderele 'images' sau 'labels' nu există în {base_path}")
-        return []
 
     for img_path in images_dir.rglob("*"):
         if img_path.is_file() and img_path.suffix.lower() in extensii_imagini:
@@ -188,10 +179,7 @@ def colecteaza_date_antrenare(
                         (str(img_path.resolve()), str(label_path.resolve()))
                     )
 
-    print("📊 Sumar scanare:")
-    print(f"   - Imagini găsite în total: {numar_imagini_totale}")
-    print(f"   - Imagini valide găsite: {len(perechi_gasite)}")
-
+    
     return perechi_gasite
 
 
@@ -242,29 +230,16 @@ class TrainWorker(threading.Thread):
     def anuleaza(self):
         self._cancel_event.set()
 
-
-
-
-
-    
     def run(self):
         if not YOLO_DISPONIBIL:
-            print(
-                "Eroare: Pachetul 'ultralytics' nu este instalat. Rulează: pip install ultralytics"
-            )
             self.cb_finish(anulat=True)
             return
-
-        print("=" * 40)
-        print("PREGĂTIRE SET DE DATE PENTRU ANTRENARE YOLO...")
-        print("=" * 40)
 
         dataset_dir = os.path.join(self.director_curent, "yolo_dataset_temp")
         os.makedirs(os.path.join(dataset_dir, "images", "train"), exist_ok=True)
         os.makedirs(os.path.join(dataset_dir, "labels", "train"), exist_ok=True)
 
         class_mapping = {nume: i for i, nume in enumerate(self.clase_selectate)}
-        # Presupunem că variabila 'nume_clasa' conține numele original
         
         mapa_imagini = os.path.join(self.director_curent, "images")
         mapa_labels = os.path.join(self.director_curent, "labels")
@@ -342,16 +317,9 @@ class TrainWorker(threading.Thread):
                             imagini_adaugate += 1
 
             if imagini_adaugate == 0:
-                print(
-                    "Nu s-au găsit imagini adnotate valide pentru clasele selectate."
-                )
                 shutil.rmtree(dataset_dir, ignore_errors=True)
                 self.cb_finish(anulat=True)
                 return
-
-            print(
-                f"✅ Au fost pregătite {imagini_adaugate} imagini pentru antrenare."
-            )
 
             yaml_path = os.path.join(dataset_dir, "data.yaml")
             yaml_content = {
@@ -362,12 +330,8 @@ class TrainWorker(threading.Thread):
             }
             with open(yaml_path, "w", encoding="utf-8") as f:
                 yaml.dump(yaml_content, f)
-
-            # Obținem calea către directorul părinte (un pas în urmă)
             director_parinte = os.path.dirname(self.director_curent)
             cale_models_dir = os.path.join(director_parinte, "models")
-
-            # Creează folderul 'YOLO models' în directorul părinte dacă nu există
             os.makedirs(cale_models_dir, exist_ok=True)
 
             if self.model_ales == "Model YOLO neantrenat":
@@ -375,21 +339,14 @@ class TrainWorker(threading.Thread):
                 cale_model_baza = os.path.join(cale_models_dir, nume_model_baza)
 
                 if os.path.exists(cale_model_baza):
-                    print(f"✅ Model de bază găsit în: {cale_model_baza}")
                     model = YOLO(cale_model_baza)
                 else:
-                    print(f"⬇️ Modelul de bază {nume_model_baza} nu există. Se descarcă...")
                     model = YOLO(nume_model_baza)
-
-                    # Dacă biblioteca l-a descărcat local, îl mutăm în folderul din directorul părinte
                     if os.path.exists(nume_model_baza):
                         shutil.move(nume_model_baza, cale_model_baza)
-                        print(f"📁 Modelul descărcat a fost salvat în: {cale_model_baza}")
                     elif os.path.exists(os.path.join(self.director_curent, nume_model_baza)):
                         shutil.move(os.path.join(self.director_curent, nume_model_baza), cale_model_baza)
-                        print(f"📁 Modelul descărcat a fost salvat în: {cale_model_baza}")
             else:
-                # Caută modelul antrenat tot în folderul 'YOLO models' din directorul părinte
                 model_path = os.path.join(cale_models_dir, self.model_ales)
                 model = YOLO(model_path)
 
@@ -414,7 +371,6 @@ class TrainWorker(threading.Thread):
 
             model.add_callback("on_train_epoch_end", on_train_epoch_end)
 
-            print("PORNIRE ANTRENARE EFECTIVĂ...")
             device_str = self.device_code if hasattr(self, "device_code") and self.device_code else "cpu"
 
             timp_start = time.time()
@@ -457,7 +413,7 @@ class TrainWorker(threading.Thread):
 
                     destinatie_finala = os.path.join(director_parinte, "models", nume_model_salvat)
                     shutil.copy(best_model_path, destinatie_finala)
-                    print(f"Model salvat cu succes: {destinatie_finala}")
+
 
                 if self.sterge_dupa:
                     for nume_clasa in self.clase_selectate:
@@ -473,7 +429,6 @@ class TrainWorker(threading.Thread):
             self.cb_finish(anulat=self._cancel_event.is_set())
 
         except Exception as e:
-            print(f"Eroare severă în timpul antrenării YOLO: {e}")
             self.cb_finish(anulat=True)
         finally:
             shutil.rmtree(dataset_dir, ignore_errors=True)
@@ -526,7 +481,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         )
         self.var_nume_model_nou = customtkinter.StringVar(value="")
 
-        cpu_nume, threads, gpu_nume, gpu_suportat, device_code, sys_gpu_nume = detecteaza_hardware_sistem()
+        cpu_nume, threads, gpu_nume, gpu_suportat, device_code, sys_gpu_nume = hardware_detection()
         self.total_cpu_threads = threads
         self.cpu_disponibil_nume = f"CPU: {cpu_nume} ({threads} Th)"
         self.gpu_device_code = device_code
@@ -566,16 +521,13 @@ class TrainWindow(customtkinter.CTkToplevel):
         if not canvas:
             return
         self.update_idletasks()
-        self.update_idletasks() # Esențial pentru a lua noile limite când apar clase noi
+        self.update_idletasks() 
         bbox = canvas.bbox("all")
-        
-        # Dacă nu există conținut deloc, ieșim fără să dăm crash
         if not bbox:
             return "break"
             
         inaltime_continut = bbox[3] - bbox[1]
-        
-        # Dacă tot conținutul încape, resetăm frumos la 0 și oprim scroll-ul
+
         if inaltime_continut <= canvas.winfo_height():
             canvas.yview_moveto(0.0)
             return "break"
@@ -591,7 +543,6 @@ class TrainWindow(customtkinter.CTkToplevel):
         dimensiune_vizibila = bottom - top
         max_top = 1.0 - dimensiune_vizibila
 
-        # Prevenim derularea peste limite (sus/jos)
         if cantitate < 0 and top <= 0.0:
             canvas.yview_moveto(0.0)
             return "break"
@@ -625,6 +576,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             if hasattr(self, 'modal_stergere') and self.modal_stergere is not None and self.modal_stergere.winfo_exists():
                 self.modal_stergere.geometry(geo)
                 self.modal_stergere.lift()
+
     def _arata_modale_la_restaurare(self, event):
         if str(event.widget) == str(self):
             if hasattr(self, 'modal_overlay') and self.modal_overlay is not None and self.modal_overlay.winfo_exists():
@@ -713,38 +665,33 @@ class TrainWindow(customtkinter.CTkToplevel):
         threading.Thread(target=self._worker_descarcare_cuda, args=(versiune_cuda,), daemon=True).start()
 
     def _worker_descarcare_cuda(self, versiune_cuda):
-        # 1. Mapăm versiunea CUDA din string-ul tău la indexul corect PyTorch
-        torch_cu = "cu118" # Default de siguranță
+        
+        torch_cu = "cu118" 
         if "12.1" in versiune_cuda:
             torch_cu = "cu121"
         elif "12.4" in versiune_cuda or "12.8" in versiune_cuda:
-            torch_cu = "cu124" # Versiuni noi suportate de PyTorch
+            torch_cu = "cu124" 
 
-        # ---> MODIFICARE 1: Folosim calea absolută către uv.exe local
+        
         cale_uv = os.path.join(self.DIRECTOR_CURENT, "uv.exe")
         
-        # Dacă cumva nu-l găsește lângă script, va încerca totuși varianta globală
+        
         if not os.path.exists(cale_uv):
-            print(f"⚠️ Avertisment: Nu am găsit uv.exe în {self.DIRECTOR_CURENT}. Încerc varianta globală.")
             cale_uv = "uv"
 
-        # 2. Comanda folosind calea corectă
+    
         cmd = [
     cale_uv, "pip", "install", 
-    "torch", "torchvision",                     # Specifici pachetele separat
-    "--index-url", f"https://download.pytorch.org/whl/{torch_cu}", # Trimiți indexul corect cu flag-ul --index-url
+    "torch", "torchvision",                    
+    "--index-url", f"https://download.pytorch.org/whl/{torch_cu}", 
     "--reinstall",
-    "--python", sys.executable                  # Forțează uv să folosească Python-ul curent
+    "--python", sys.executable                 
 ]
 
-        print(f"\n[DEBUG] Se execută comanda: {' '.join(cmd)}\n")
 
         try:
             creation_flags = 0
             if platform.system() == "Windows":
-                # ---> MODIFICARE 2: Poți lăsa linia de mai jos comentată dacă vrei să 
-                # îți apară și fereastra neagră de CMD peste aplicație, 
-                # sau o poți lăsa activă deoarece erorile vor fi printate oricum în consola IDE-ului.
                 creation_flags = subprocess.CREATE_NO_WINDOW
 
             process = subprocess.Popen(
@@ -754,34 +701,23 @@ class TrainWindow(customtkinter.CTkToplevel):
                 text=True,
                 creationflags=creation_flags
             )
-
-            # Citim output-ul în timp real
             progres_curent = 0.0
-
-            # Citim output-ul în timp real
             for linie in process.stdout:
-                # Dacă userul a apăsat Cancel
                 if self.cancel_cuda_event.is_set():
                     process.terminate()
                     return
-                
+    
                 linie_str = linie.strip()
-                print(f"[UV TERMINAL] {linie_str}")
-
-                # --- CALCUL PROGRES APROXIMATIV ---
-                # 1. Căutăm procentaje explicite în output (ex: 45%)
                 match_procent = re.search(r'(\d{1,3})%', linie_str)
                 if match_procent:
                     valoare = int(match_procent.group(1)) / 100.0
                     if valoare > progres_curent:
                         progres_curent = valoare
                 else:
-                    # 2. Dacă nu găsim procentaj, estimăm pe baza cuvintelor cheie
                     linie_low = linie_str.lower()
                     if "resolving" in linie_low and progres_curent < 0.1:
                         progres_curent = 0.1
                     elif "downloading" in linie_low or "fetching" in linie_low:
-                        # Incrementăm ușor la fiecare pachet descărcat
                         if progres_curent < 0.7:
                             progres_curent += 0.02 
                     elif "installing" in linie_low or "extracting" in linie_low:
@@ -789,11 +725,8 @@ class TrainWindow(customtkinter.CTkToplevel):
                             progres_curent = 0.8
                         elif progres_curent < 0.95:
                             progres_curent += 0.01
-
-                # Asigurăm că nu depășim 99% până nu se finalizează totul
                 progres_curent = min(progres_curent, 0.99)
 
-                # --- ACTUALIZARE UI ---
                 text_scurt = linie_str[:60]
                 self.after(0, lambda p=progres_curent, t=text_scurt: [
                     self.cuda_progress.set(p) if hasattr(self, "cuda_progress") else None,
@@ -805,11 +738,9 @@ class TrainWindow(customtkinter.CTkToplevel):
                 self.after(0, self._finalizeaza_instalare_cuda)
             else:
                 self.after(0, lambda: self.lbl_cuda_status.configure(text=f"Eroare la instalare (Cod: {process.returncode}).", text_color="#FF6B6B"))
-                print(f"\n❌ [EROARE CRITICĂ] Comanda a eșuat cu codul {process.returncode}. Verifică log-urile de mai sus.")
 
         except Exception as e:
             self.after(0, lambda: self.lbl_cuda_status.configure(text=f"Eroare lansare comandă (Vezi terminalul).", text_color="#FF6B6B"))
-            print(f"\n❌ [EROARE PYTHON] Nu s-a putut porni procesul: {e}\n")
 
     def _actualizeaza_ui_cuda(self, val_float, procent, timp_ramas):
         if hasattr(self, "cuda_progress") and self.modal_cuda.winfo_exists():
@@ -818,12 +749,8 @@ class TrainWindow(customtkinter.CTkToplevel):
 
     def _finalizeaza_instalare_cuda(self, cale_installer=None):
         self.lbl_cuda_status.configure(text="Instalare completă! Aplicația se repornește automat...")
-        
-        # Completăm progress bar-ul la 100%
         if hasattr(self, "cuda_progress"):
             self.cuda_progress.set(1.0)
-        
-        # Așteptăm 2.5 secunde pentru ca utilizatorul să poată citi mesajul de succes, apoi repornim
         self.after(2500, self._executa_repornire_aplicatie)
 
     def _executa_repornire_aplicatie(self):
@@ -831,11 +758,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             self.modal_cuda.grab_release()
             self.modal_cuda.destroy()
         except Exception as e:
-            print(f"Eroare la închiderea ferestrei modale: {e}")
-        
-        print("\n🔄 Se inițiază repornirea aplicației...\n")
-        
-        # Această comandă înlocuiește instantaneu procesul curent cu un nou proces Python identic
+            print(f"Error{e}")
         os.execl(sys.executable, sys.executable, *sys.argv)
     def _pe_enter_apasat(self, event=None):
         if self.mod_stergere_multipla:
@@ -897,7 +820,6 @@ class TrainWindow(customtkinter.CTkToplevel):
         frame_butoane = customtkinter.CTkFrame(dialog, fg_color="transparent")
         frame_butoane.pack(fill="x", padx=20)
 
-        # Butonul NU
         btn_nu = customtkinter.CTkButton(
             frame_butoane,
             text="Nu",
@@ -908,7 +830,6 @@ class TrainWindow(customtkinter.CTkToplevel):
         )
         btn_nu.pack(side="left", padx=20)
 
-        # Butonul DA
         btn_da = customtkinter.CTkButton(
             frame_butoane,
             text="Da",
@@ -928,7 +849,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             if os.path.exists(self.MAPA_LABELS):
                 shutil.rmtree(self.MAPA_LABELS, ignore_errors=True)
         except Exception as e:
-            print(f"Eroare la ștergerea totală: {e}")
+            print(f"Error {e}")
 
         os.makedirs(self.MAPA_ALL, exist_ok=True)
         os.makedirs(self.MAPA_LABELS, exist_ok=True)
@@ -1016,7 +937,6 @@ class TrainWindow(customtkinter.CTkToplevel):
             )
 
         except Exception as e:
-            print(f"Imaginile pentru meniu nu au putut fi încărcate: {e}")
             img_galerie = img_invatare = img_inapoi = None
 
         culoare_card = "#2b2d31"
@@ -1330,9 +1250,6 @@ class TrainWindow(customtkinter.CTkToplevel):
             nume_mic = self.sys_gpu_nume.lower()
             are_amd = "amd" in nume_mic or "radeon" in nume_mic
             are_nvidia = "nvidia" in nume_mic or "rtx" in nume_mic or "gtx" in nume_mic
-            
-            # Sistemul este considerat AMD (fără suport CUDA) DOAR dacă
-            # are grafică AMD, dar nu are o placă NVIDIA dedicată pe lângă ea.
             if are_amd and not are_nvidia:
                 este_amd = True
         deja_are_cuda = (self.gpu_device_code == "cuda")
@@ -1672,10 +1589,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             command=self.arata_pagina_principala,
         )
         buton_inapoi_invatare.pack(side="right")
-        # BINDING PENTRU SCROLL ÎN MENIUL ÎNVĂȚARE (CLASE, SETĂRI, MODELE)
-        # Folosim lambda pentru a transmite widget-ul specific către funcția generică
-        
-        # 1. Pentru Setări Antrenare
+
         self._bind_scroll_la_widget(
             self.scroll_setari_interior, 
             lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_setari_interior)
@@ -1686,7 +1600,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                 lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_setari_interior)
             )
 
-        # 2. Pentru Modele
+
         self._bind_scroll_la_widget(
             self.scroll_modele_invatare, 
             lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_modele_invatare)
@@ -1697,7 +1611,6 @@ class TrainWindow(customtkinter.CTkToplevel):
                 lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_modele_invatare)
             )
 
-        # 3. Pentru Clase (opțional, ca să meargă impecabil peste tot în fereastră)
         self._bind_scroll_la_widget(
             self.scroll_clase_invatare, 
             lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_clase_invatare)
@@ -1707,7 +1620,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                 self.scroll_clase_invatare._parent_canvas, 
                 lambda e: self._pe_rotire_scroll_vertical(e, self.scroll_clase_invatare)
             )
-                # Pentru Tab-urile claselor (orizontal)
+
         if hasattr(self.tab_scroll_frame, "_parent_frame"):
             self.tab_scroll_frame._parent_frame.bind(
                 "<Configure>", 
@@ -1715,7 +1628,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                 add="+"
             )
 
-        # Pentru Galeria de imagini (vertical)
+
         if hasattr(self.galerie_imagini, "_parent_frame"):
             self.galerie_imagini._parent_frame.bind(
                 "<Configure>", 
@@ -1723,7 +1636,6 @@ class TrainWindow(customtkinter.CTkToplevel):
                 add="+"
             )
 
-        # Pentru meniul din interiorul paginii de Învățare (Setări)
         if hasattr(self.scroll_setari_interior, "_parent_frame"):
             self.scroll_setari_interior._parent_frame.bind(
                 "<Configure>", 
@@ -1731,7 +1643,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                 add="+"
             )
 
-        # Pentru Modele
+
         if hasattr(self.scroll_modele_invatare, "_parent_frame"):
             self.scroll_modele_invatare._parent_frame.bind(
                 "<Configure>", 
@@ -1772,14 +1684,17 @@ class TrainWindow(customtkinter.CTkToplevel):
             self.incarca_imagini()
 
     def deschide_detectie_live(self):
+        # 1. (Opțional, dar recomandat) Ascunde fereastra principală cât timp ești în modul Realtime
         self.withdraw()
-        app_captura = RealtimeCaptureWindow(parent=self.master if hasattr(self, "master") else self)
         
-        def la_inchidere_live():
-            app_captura.destroy()
-            self.deiconify()
-            
-        app_captura.protocol("WM_DELETE_WINDOW", la_inchidere_live)
+        # 2. Deschide fereastra de detecție
+        app_captura = RealtimeCaptureWindow(parent=self)
+        
+        # 3. Blochează execuția scriptului principal AICI până când 'app_captura' este distrusă
+        self.wait_window(app_captura)
+        
+        # 4. Fereastra 'app_captura' a fost distrusă, readucem fereastra principală pe ecran
+        self.deiconify()
 
     def _sterge_imagini_selectate(self):
         for cale in self.imagini_selectate_stergere:
@@ -1804,7 +1719,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                 for k in keys_to_del:
                     del self.thumbnail_cache[k]
             except Exception as e:
-                print(f"Eroare stergere (multiplă) imagine {cale}: {e}")
+                print(f"Error{cale}: {e}")
 
     def pagina_anterioara(self):
         self._pe_leave_imagine(None)
@@ -1938,7 +1853,6 @@ class TrainWindow(customtkinter.CTkToplevel):
                                 data = resp.read()
 
                             if len(data) < 2048:
-                                print(f"Imaginea {i+1} este prea mică (posibil goală). Trecem peste.")
                                 continue
 
                             ext = ".jpg"
@@ -1955,20 +1869,17 @@ class TrainWindow(customtkinter.CTkToplevel):
                                 with Image.open(img_path) as img_test:
                                     img_test.verify()
                             except UnidentifiedImageError:
-                                print(f"Imaginea {i+1} este coruptă. Se șterge automat.")
                                 os.remove(img_path)
                                 continue
 
                             descarcate += 1
 
                         except urllib.error.HTTPError as e:
-                            print(f"Eroare HTTP {e.code} la descărcarea imaginii {i+1}. Trecem la următoarea.")
                             continue
                         except urllib.error.URLError as e:
-                            print(f"Eroare de conexiune la imaginea {i+1}. Trecem la următoarea.")
                             continue
                         except Exception as err:
-                            print(f"Eroare generală la descărcare imagine {i+1}: {err}")
+                            print(f"Error{i+1}: {err}")
 
                     self.after(0, lambda: [
                         dialog.destroy(),
@@ -2009,7 +1920,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                     if len(urls) >= num_images:
                         break
         except Exception as e:
-            print(f"Eroare cautare Bing: {e}")
+            print(f"Eror bing {e}")
             
         return urls
 
@@ -2039,7 +1950,6 @@ class TrainWindow(customtkinter.CTkToplevel):
                             )
                         shutil.copy(c_path, dest)
                         importate += 1
-                print(f"📥 Au fost importate {importate} fișiere.")
                 self.after(0, self.incarca_imagini)
 
             threading.Thread(target=proceseaza_import, daemon=True).start()
@@ -2066,9 +1976,6 @@ class TrainWindow(customtkinter.CTkToplevel):
                         shutil.copy(item, dest)
                         importate += 1
 
-                print(
-                    f"📥 Au fost importate {importate} imagini din folder și subfoldere."
-                )
                 self.after(0, self.incarca_imagini)
 
             threading.Thread(
@@ -2116,7 +2023,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             print(f"Eroare la deschiderea editorului: {e}")
 
     def actualizeaza_stare_buton_antrenare(self, *args):
-        # --- MODIFICARE 1: Verificăm dacă clasa bifată are cel puțin o imagine în folder ---
+
         extensii_valide = ('.png', '.jpg', '.jpeg', '.webp', '.bmp')
 
         def clasa_are_imagini(nume_clasa):
@@ -2127,8 +2034,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                         if f.lower().endswith(extensii_valide):
                             return True
             return False
-
-        # clasa trebuie să fie bifată ȘI să conțină imagini
+        
         clase_ok = any(
             var.get() and clasa_are_imagini(nume)
             for nume, var in self.vars_clase.items()
@@ -2261,7 +2167,6 @@ class TrainWindow(customtkinter.CTkToplevel):
         for widget in self.scroll_modele_invatare.winfo_children():
             widget.destroy()
 
-        # --- MODIFICARE 2: Verificăm dacă există modele în mapa 'models' ---
         fisiere_modele = []
         if os.path.exists(self.MAPA_MODELE):
             fisiere_modele = [
@@ -2270,10 +2175,8 @@ class TrainWindow(customtkinter.CTkToplevel):
 
         modele_disponibile = []
         if fisiere_modele:
-            # Dacă există cel puțin un model salvat în 'models', adăugăm opțiunile
             modele_disponibile = ["Model YOLO neantrenat"] + fisiere_modele
         else:
-            # Dacă NU există niciun model în mapa 'models', lista rămâne goală (nu se afișează modelul neantrenat)
             modele_disponibile = []
 
         if self.var_model_selectat.get() not in modele_disponibile:
@@ -2311,9 +2214,6 @@ class TrainWindow(customtkinter.CTkToplevel):
         self.var_all_clase.set(toate_bifate)
         self.actualizeaza_stare_buton_antrenare()
     def _obtine_geometrie_scalata(self):
-            """
-            Neutralizează dubla scalare CustomTkinter pentru ferestrele modale (overlays).
-            """
             try:
                 scale = self._get_window_scaling()
             except AttributeError:
@@ -2351,7 +2251,6 @@ class TrainWindow(customtkinter.CTkToplevel):
             float(lr)
             int(workers)
         except ValueError:
-            print("Eroare de formatare la cifre!")
             return
 
         def cb_progress(valoare_float, procentaj, timp_ramas):
@@ -2496,7 +2395,6 @@ class TrainWindow(customtkinter.CTkToplevel):
         if not canvas:
             return
         self.update_idletasks()
-        # VERIFICARE NOUĂ: Axa X
         bbox = canvas.bbox("all")
         if not bbox or (bbox[2] - bbox[0]) <= canvas.winfo_width():
             canvas.xview_moveto(0.0)
@@ -2537,41 +2435,32 @@ class TrainWindow(customtkinter.CTkToplevel):
         
         if not canvas or not scrollbar:
             return
-
-        # Asigură-te că UI-ul este actualizat înainte de a citi dimensiunile
+        
         self.update_idletasks()
         
         bbox = canvas.bbox("all")
         if not bbox:
             return
 
-        # Forțăm afișarea scrollbar-ului indiferent de dimensiunea conținutului
         scrollbar.grid()
 
-        # Setăm regiunea de scroll pentru a face bara inactivă dacă nu e nevoie de ea
         if orientare == "vertical":
             inaltime_continut = bbox[3] - bbox[1]
             if inaltime_continut <= canvas.winfo_height():
-                # Conținutul încape -> inactivăm scrollul
                 canvas.configure(scrollregion=(0, 0, canvas.winfo_width(), canvas.winfo_height()))
             else:
-                # Conținutul depășește -> activăm scrollul
                 canvas.configure(scrollregion=bbox)
         elif orientare == "horizontal":
             latime_continut = bbox[2] - bbox[0]
             if latime_continut <= canvas.winfo_width():
-                # Conținutul încape -> inactivăm scrollul
                 canvas.configure(scrollregion=(0, 0, canvas.winfo_width(), canvas.winfo_height()))
             else:
-                # Conținutul depășește -> activăm scrollul
                 canvas.configure(scrollregion=bbox)
     def _pe_rotire_galerie(self, event):
         canvas = getattr(self.galerie_imagini, "_parent_canvas", None)
         if not canvas:
             return
         self.update_idletasks()
-            
-        # VERIFICARE NOUĂ
         bbox = canvas.bbox("all")
         if not bbox or (bbox[3] - bbox[1]) <= canvas.winfo_height():
             canvas.yview_moveto(0.0)
@@ -3099,7 +2988,7 @@ class TrainWindow(customtkinter.CTkToplevel):
 
             self.after(50, self.incarca_imagini)
         except Exception as e:
-            print(f"Eroare stergere img: {e}")
+            print(f"Eror {e}")
 
     def scoate_din_clasa(
         self, calea_imagine, nume_fara_extensie, nume_clasa_efectiva
@@ -3122,7 +3011,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                     try:
                         os.remove(cale_txt)
                     except Exception as e:
-                        print(f"Eroare la ștergerea etichetei: {e}")
+                        print(f"Error {e}")
 
             dir_parinte = os.path.dirname(calea_imagine)
             if os.path.abspath(dir_parinte) != os.path.abspath(self.MAPA_ALL):
@@ -3150,7 +3039,7 @@ class TrainWindow(customtkinter.CTkToplevel):
             self.after(50, self.incarca_imagini)
 
         except Exception as e:
-            print(f"Eroare la scoaterea imaginii din clasă: {e}")
+            print(f"Error {e}")
 
     def curata_imagini_neadnotate(self):
         self.incarca_clase_existente()
@@ -3193,7 +3082,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                                         shutil.move(c_img, dest_all)
                                     except Exception as e:
                                         print(
-                                            f"Eroare mutare imagine neadnotată în all: {e}"
+                                            f"Error {e}"
                                         )
 
         if os.path.exists(self.MAPA_ALL):
@@ -3217,7 +3106,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                                 shutil.move(c_img, dest_img)
                             except Exception as e:
                                 print(
-                                    f"Eroare mutare imagine adnotată în clasa {c_ex}: {e}"
+                                    f"Error{c_ex}: {e}"
                                 )
                             break
 
@@ -3325,15 +3214,11 @@ class TrainWindow(customtkinter.CTkToplevel):
                                         este_ad = True
                                         n_clasa_ef = c_ex
                                         break
-                            
-                            # --- LOGICA NOUĂ DE FILTRARE ---
+                        
                             ascunde_adnotate = getattr(self, "var_doar_neadnotate", None)
                             if ascunde_adnotate and ascunde_adnotate.get():
-                                # Dacă suntem în "All" (self.clasa_selectata is None) și imaginea are adnotare, sărim peste ea
                                 if self.clasa_selectata is None and este_ad:
                                     continue
-                            # -------------------------------
-
                             lista.append(
                                 (cale_c, f_name, n_fara, n_clasa_ef, este_ad)
                             )
@@ -3665,7 +3550,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                         c = 0
                         r += 1
                 except Exception as e:
-                    print(f"Eroare procesare thumbnail {cale_c}: {e}")
+                    print(f"Error {cale_c}: {e}")
 
             if token == self.load_token:
                 self.after(
@@ -3831,7 +3716,7 @@ class TrainWindow(customtkinter.CTkToplevel):
                         "<Enter>", lambda e, p=pac: self._pe_enter_imagine(e, p)
                     )
             except Exception as ex:
-                print(f"Eroare la randarea elementului UI: {ex}")
+                print(f"Error{ex}")
 
 if __name__ == "__main__":
     customtkinter.set_appearance_mode("Dark")
