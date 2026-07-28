@@ -669,7 +669,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         torch_cu = "cu118" 
         if "12.1" in versiune_cuda:
             torch_cu = "cu121"
-        elif "12.4" in versiune_cuda or "12.8" in versiune_cuda:
+        elif "12.4" in versiune_cuda or "12.9" in versiune_cuda:
             torch_cu = "cu124" 
 
         
