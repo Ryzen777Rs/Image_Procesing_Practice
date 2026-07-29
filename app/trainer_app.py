@@ -607,7 +607,7 @@ class TrainWindow(customtkinter.CTkToplevel):
     def obtine_versiune_cuda_recomandata(self, sys_gpu_nume):
         nume_mic = sys_gpu_nume.lower()
         if any(x in nume_mic for x in ["rtx 50"]):
-            return "Blackwell (Seria RTX 5000)", "CUDA 12.9", "Generație nouă"
+            return "Blackwell (Seria RTX 5000)", "CUDA 12.8", "Generație nouă"
         elif any(x in nume_mic for x in ["rtx 40"]):
             return "Ada Lovelace (Seria RTX 4000)", "CUDA 12.1 sau 12.4", "Generație curentă"
         elif any(x in nume_mic for x in ["rtx 30"]):
@@ -669,7 +669,7 @@ class TrainWindow(customtkinter.CTkToplevel):
         torch_cu = "cu118" 
         if "12.1" in versiune_cuda:
             torch_cu = "cu121"
-        elif "12.4" in versiune_cuda or "12.9" in versiune_cuda:
+        elif "12.4" in versiune_cuda or "12.8" in versiune_cuda:
             torch_cu = "cu124" 
 
         
@@ -681,11 +681,10 @@ class TrainWindow(customtkinter.CTkToplevel):
 
     
         cmd = [
-    cale_uv, "pip", "install", 
-    "torch", "torchvision",                    
-    "--index-url", f"https://download.pytorch.org/whl/{torch_cu}", 
-    "--reinstall",
-    "--python", sys.executable                 
+    sys.executable, "-m", "pip", "install", 
+    "torch", "torchvision",
+    "--index-url", f"https://download.pytorch.org/whl/{torch_cu}",
+    "--force-reinstall"               
 ]
 
 
